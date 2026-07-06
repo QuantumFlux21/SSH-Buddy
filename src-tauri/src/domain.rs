@@ -69,6 +69,7 @@ pub struct ServerProfile {
     pub port: u16,
     pub username: String,
     pub identity_file_id: Option<String>,
+    pub proxy_jump: Option<String>,
     pub group_id: Option<String>,
     pub notes: Option<String>,
     pub favorite: bool,
@@ -102,6 +103,7 @@ pub struct ServerInput {
     pub port: u32,
     pub username: String,
     pub identity_file_id: Option<String>,
+    pub proxy_jump: Option<String>,
     pub group_id: Option<String>,
     pub notes: Option<String>,
     pub favorite: bool,
@@ -223,7 +225,112 @@ pub fn validate_server_input(input: &ServerInput) -> AppResult<()> {
         return Err("Port must be between 1 and 65535".to_string());
     }
 
+    if let Some(proxy_jump) = &input.proxy_jump {
+        validate_proxy_jump(proxy_jump)?;
+    }
+
     Ok(())
+}
+
+pub fn validate_proxy_jump(value: &str) -> AppResult<()> {
+    let proxy_jump = value.trim();
+    if proxy_jump.is_empty() {
+        return Err("ProxyJump cannot be blank".to_string());
+    }
+
+    if proxy_jump.chars().any(char::is_whitespace) {
+        return Err("ProxyJump must not contain whitespace".to_string());
+    }
+
+    if proxy_jump
+        .chars()
+        .any(|character| !is_proxy_jump_character_allowed(character))
+    {
+        return Err(
+            "ProxyJump contains unsupported characters. Use OpenSSH host specs like user@bastion:22."
+                .to_string(),
+        );
+    }
+
+    for jump in proxy_jump.split(',') {
+        validate_proxy_jump_entry(jump)?;
+    }
+
+    Ok(())
+}
+
+fn validate_proxy_jump_entry(entry: &str) -> AppResult<()> {
+    if entry.is_empty() {
+        return Err("ProxyJump entries must not be empty".to_string());
+    }
+
+    let mut parts = entry.split('@');
+    let first = parts.next().unwrap_or_default();
+    let second = parts.next();
+    if parts.next().is_some() {
+        return Err("ProxyJump entries may contain at most one @".to_string());
+    }
+
+    let host = if let Some(host) = second {
+        if first.is_empty() {
+            return Err("ProxyJump username must not be empty".to_string());
+        }
+        host
+    } else {
+        first
+    };
+
+    if host.is_empty() {
+        return Err("ProxyJump host must not be empty".to_string());
+    }
+
+    if host.starts_with('-') {
+        return Err("ProxyJump host must not start with '-'".to_string());
+    }
+
+    validate_proxy_jump_host_and_port(host)
+}
+
+fn validate_proxy_jump_host_and_port(host: &str) -> AppResult<()> {
+    if let Some(remainder) = host.strip_prefix('[') {
+        let Some(end) = remainder.find(']') else {
+            return Err("ProxyJump IPv6 hosts must close ']'".to_string());
+        };
+        let address = &remainder[..end];
+        let suffix = &remainder[end + 1..];
+        if address.is_empty() {
+            return Err("ProxyJump host must not be empty".to_string());
+        }
+        if !suffix.is_empty() {
+            let Some(port) = suffix.strip_prefix(':') else {
+                return Err("ProxyJump IPv6 host suffix must be a port like :22".to_string());
+            };
+            validate_proxy_jump_port(port)?;
+        }
+        return Ok(());
+    }
+
+    let colon_count = host.chars().filter(|character| *character == ':').count();
+    if colon_count == 1 {
+        let (host_part, port_part) = host.rsplit_once(':').unwrap_or((host, ""));
+        if host_part.is_empty() {
+            return Err("ProxyJump host must not be empty".to_string());
+        }
+        validate_proxy_jump_port(port_part)?;
+    }
+
+    Ok(())
+}
+
+fn validate_proxy_jump_port(port: &str) -> AppResult<()> {
+    match port.parse::<u16>() {
+        Ok(value) if value > 0 => Ok(()),
+        _ => Err("ProxyJump port must be between 1 and 65535".to_string()),
+    }
+}
+
+fn is_proxy_jump_character_allowed(character: char) -> bool {
+    character.is_ascii_alphanumeric() || "._-+@:%[],".contains(character)
 }
 
 pub fn validate_group_input(input: &GroupInput) -> AppResult<()> {
@@ -298,6 +405,7 @@ mod tests {
             port: 22,
             username: "admin".to_string(),
             identity_file_id: None,
+            proxy_jump: None,
             group_id: None,
             notes: None,
             favorite: false,
@@ -334,6 +442,36 @@ mod tests {
             validate_server_input(&input).unwrap_err(),
             "Port must be between 1 and 65535"
         );
+    }
+
+    #[test]
+    fn validates_proxy_jump_values() {
+        for proxy_jump in [
+            "bastion",
+            "user@bastion",
+            "user@bastion:22",
+            "user@bastion:22,jump2",
+            "user@[2001:db8::1]:2222",
+        ] {
+            let mut input = valid_server_input();
+            input.proxy_jump = Some(proxy_jump.to_string());
+            assert!(validate_server_input(&input).is_ok(), "{proxy_jump}");
+        }
+
+        for (proxy_jump, message) in [
+            (" ", "ProxyJump cannot be blank"),
+            ("bastion;touch", "ProxyJump contains unsupported characters. Use OpenSSH host specs like user@bastion:22."),
+            ("bastion proxy", "ProxyJump must not contain whitespace"),
+            ("bastion,", "ProxyJump entries must not be empty"),
+            ("user@@bastion", "ProxyJump entries may contain at most one @"),
+            ("@bastion", "ProxyJump username must not be empty"),
+            ("-bastion", "ProxyJump host must not start with '-'"),
+            ("bastion:0", "ProxyJump port must be between 1 and 65535"),
+        ] {
+            let mut input = valid_server_input();
+            input.proxy_jump = Some(proxy_jump.to_string());
+            assert_eq!(validate_server_input(&input).unwrap_err(), message);
+        }
     }
 
     #[test]

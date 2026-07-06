@@ -27,6 +27,7 @@ function server(overrides: Partial<ServerProfile>): ServerProfile {
     port: 22,
     username: "admin",
     identityFileId: null,
+    proxyJump: null,
     groupId: "grp_lab",
     notes: null,
     favorite: false,
@@ -51,6 +52,7 @@ describe("filterServers", () => {
       displayName: "Router",
       host: "10.0.0.1",
       username: "root",
+      proxyJump: "bastion.local",
       groupId: "grp_edge",
       tags: [{ id: "tag_network", name: "network", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" }],
     }),
@@ -61,6 +63,7 @@ describe("filterServers", () => {
     expect(filterServers(servers, groups, "network", null).map((item) => item.id)).toEqual(["srv_router"]);
     expect(filterServers(servers, groups, "edge", null).map((item) => item.id)).toEqual(["srv_router"]);
     expect(filterServers(servers, groups, "ROOT", null).map((item) => item.id)).toEqual(["srv_router"]);
+    expect(filterServers(servers, groups, "bastion", null).map((item) => item.id)).toEqual(["srv_router"]);
   });
 
   it("filters by group before applying text search", () => {

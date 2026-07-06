@@ -690,6 +690,7 @@ function ServerDetails({
           <Info label="Port" value={String(server.port)} />
           <Info label="Username" value={server.username || "Default OpenSSH user"} />
           <Info label="Identity file" value={keyLabel(keyRefs, server.identityFileId)} />
+          {server.proxyJump ? <Info label="ProxyJump" value={server.proxyJump} /> : null}
         </div>
 
         <section className="panel">
@@ -1067,6 +1068,25 @@ function ServerForm({
           <label>
             Username
             <input value={form.username} onChange={(event) => update("username", event.target.value)} placeholder="OpenSSH default" />
+          </label>
+          <label className="span-2">
+            ProxyJump
+            <input
+              value={form.proxyJump}
+              onChange={(event) => update("proxyJump", event.target.value)}
+              placeholder="user@bastion:22"
+              aria-invalid={submitted && Boolean(errors.proxyJump)}
+              aria-describedby={submitted && errors.proxyJump ? "proxy-jump-error" : "proxy-jump-hint"}
+            />
+            {submitted && errors.proxyJump ? (
+              <span className="field-error" id="proxy-jump-error">
+                {errors.proxyJump}
+              </span>
+            ) : (
+              <span className="field-hint" id="proxy-jump-hint">
+                Uses OpenSSH `-J`. Example: `user@bastion:22`.
+              </span>
+            )}
           </label>
           <div className="field-stack">
             <label>

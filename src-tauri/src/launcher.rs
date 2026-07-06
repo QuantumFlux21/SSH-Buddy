@@ -7,7 +7,8 @@ use std::{
 };
 
 use crate::domain::{
-    AppResult, AppSettings, ServerProfile, SUPPORTED_TERMINAL_PREFERENCES, TERMINAL_PREFERENCE_AUTO,
+    validate_proxy_jump, AppResult, AppSettings, ServerProfile, SUPPORTED_TERMINAL_PREFERENCES,
+    TERMINAL_PREFERENCE_AUTO,
 };
 
 const TERMINAL_ORDER: &[&str] = &[
@@ -46,6 +47,12 @@ pub fn build_ssh_argv(
     if let Some(identity_file) = identity_file.and_then(normalize_optional) {
         argv.push("-i".to_string());
         argv.push(expand_home_path(&identity_file));
+    }
+
+    if let Some(proxy_jump) = server.proxy_jump.as_deref().and_then(normalize_optional) {
+        validate_proxy_jump(&proxy_jump)?;
+        argv.push("-J".to_string());
+        argv.push(proxy_jump);
     }
 
     let destination = if server.username.trim().is_empty() {
@@ -269,6 +276,7 @@ mod tests {
             port: 2222,
             username: "admin".to_string(),
             identity_file_id: None,
+            proxy_jump: None,
             group_id: None,
             notes: None,
             favorite: false,
@@ -314,6 +322,26 @@ mod tests {
     }
 
     #[test]
+    fn builds_ssh_argv_with_proxy_jump() {
+        let mut server = sample_server();
+        server.proxy_jump = Some("user@bastion:22,jump2".to_string());
+
+        let argv = build_ssh_argv(&server, None).unwrap();
+
+        assert_eq!(
+            argv,
+            vec![
+                "ssh",
+                "-p",
+                "2222",
+                "-J",
+                "user@bastion:22,jump2",
+                "admin@nas.local"
+            ]
+        );
+    }
+
+    #[test]
     fn rejects_incomplete_server_profiles() {
         let mut server = sample_server();
         server.host = " ".to_string();
@@ -327,6 +355,13 @@ mod tests {
         assert_eq!(
             build_ssh_argv(&server, None).unwrap_err(),
             "Server profile port must be between 1 and 65535"
+        );
+
+        let mut server = sample_server();
+        server.proxy_jump = Some("bastion;touch".to_string());
+        assert_eq!(
+            build_ssh_argv(&server, None).unwrap_err(),
+            "ProxyJump contains unsupported characters. Use OpenSSH host specs like user@bastion:22."
         );
     }
 
@@ -342,12 +377,17 @@ mod tests {
     fn formats_copyable_ssh_command_with_quoting() {
         let command = format_argv_for_display(&[
             "ssh".to_string(),
+            "-J".to_string(),
+            "user@bastion:22".to_string(),
             "-i".to_string(),
             "/home/alex/.ssh/lab key".to_string(),
             "admin@nas.local".to_string(),
         ]);
 
-        assert_eq!(command, "ssh -i '/home/alex/.ssh/lab key' admin@nas.local");
+        assert_eq!(
+            command,
+            "ssh -J user@bastion:22 -i '/home/alex/.ssh/lab key' admin@nas.local"
+        );
     }
 
     #[test]

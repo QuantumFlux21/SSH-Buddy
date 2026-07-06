@@ -107,6 +107,7 @@ fn import_selected_from_path(
             port: u32::from(candidate.port),
             username: candidate.username.clone(),
             identity_file_id,
+            proxy_jump: candidate.proxy_jump.clone(),
             group_id: None,
             notes: None,
             favorite: false,
@@ -178,7 +179,7 @@ fn build_candidates(
                 .or_else(|| parsed.proxy_jump.clone());
 
             if proxy_jump.is_some() {
-                warnings.push("ProxyJump detected; it is shown for review but is not stored or used for SSH launch yet.".to_string());
+                warnings.push("ProxyJump detected; SSH-Buddy will store it and launch SSH with OpenSSH -J.".to_string());
             }
 
             let duplicate = !parsed.skipped && is_duplicate(&parsed.alias, &host, existing_servers);
@@ -269,7 +270,8 @@ fn apply_option(block: &mut HostBlock, keyword: &str, values: &[String]) {
                 );
             }
         }
-        "proxyjump" => block.proxy_jump = Some(value),
+        "proxyjump" if !value.eq_ignore_ascii_case("none") => block.proxy_jump = Some(value),
+        "proxyjump" => block.proxy_jump = None,
         _ => {}
     }
 }
@@ -377,7 +379,9 @@ fn parse_ssh_g_output(output: &str) -> ResolvedHostConfig {
             "identityfile" if resolved.identity_file.is_none() && value != "none" => {
                 resolved.identity_file = Some(value.to_string())
             }
-            "proxyjump" if value != "none" => resolved.proxy_jump = Some(value.to_string()),
+            "proxyjump" if !value.eq_ignore_ascii_case("none") => {
+                resolved.proxy_jump = Some(value.to_string())
+            }
             _ => {}
         }
     }
@@ -521,6 +525,7 @@ mod tests {
             port: 22,
             username: "admin".to_string(),
             identity_file_id: None,
+            proxy_jump: None,
             group_id: None,
             notes: None,
             favorite: false,
@@ -570,6 +575,40 @@ mod tests {
                 .unwrap()
                 .identity_file_id,
             Some(keys[0].id.clone())
+        );
+    }
+
+    #[test]
+    fn imports_proxy_jump() {
+        let db = test_db();
+        let (_dir, path) = write_config(
+            "
+            Host pve
+              HostName pve.local
+              User root
+              ProxyJump admin@bastion:2222
+            ",
+        );
+
+        let preview = import_preview_from_path(&db, &path, &no_resolver).unwrap();
+        assert_eq!(preview[0].proxy_jump.as_deref(), Some("admin@bastion:2222"));
+        assert!(preview[0].warnings[0].contains("OpenSSH -J"));
+
+        let result =
+            import_selected_from_path(&db, &path, vec!["pve".to_string()], &no_resolver).unwrap();
+
+        assert_eq!(result.imported, 1);
+        assert_eq!(
+            result.servers[0].proxy_jump.as_deref(),
+            Some("admin@bastion:2222")
+        );
+        assert_eq!(
+            db.get_server(&result.servers[0].id)
+                .unwrap()
+                .unwrap()
+                .proxy_jump
+                .as_deref(),
+            Some("admin@bastion:2222")
         );
     }
 

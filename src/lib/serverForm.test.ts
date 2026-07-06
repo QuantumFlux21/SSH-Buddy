@@ -27,6 +27,41 @@ describe("server form helpers", () => {
     expect(validateServerForm({ ...newServerDraft(), displayName: "NAS", host: "nas.local", port: "22" })).toEqual({});
   });
 
+  it("validates proxy jump values", () => {
+    expect(
+      validateServerForm({
+        ...newServerDraft(),
+        displayName: "NAS",
+        host: "nas.local",
+        proxyJump: "user@bastion:22,jump2",
+      }),
+    ).toEqual({});
+    expect(
+      validateServerForm({
+        ...newServerDraft(),
+        displayName: "NAS",
+        host: "nas.local",
+        proxyJump: " ",
+      }).proxyJump,
+    ).toBe("ProxyJump cannot be blank.");
+    expect(
+      validateServerForm({
+        ...newServerDraft(),
+        displayName: "NAS",
+        host: "nas.local",
+        proxyJump: "bastion;touch",
+      }).proxyJump,
+    ).toBe("ProxyJump contains unsupported characters. Use OpenSSH host specs like user@bastion:22.");
+    expect(
+      validateServerForm({
+        ...newServerDraft(),
+        displayName: "NAS",
+        host: "nas.local",
+        proxyJump: "bastion proxy",
+      }).proxyJump,
+    ).toBe("ProxyJump must not contain whitespace.");
+  });
+
   it("trims input and deduplicates tag names", () => {
     const input = toServerInput({
       ...newServerDraft(),
@@ -34,6 +69,7 @@ describe("server form helpers", () => {
       host: " nas.local ",
       port: "2222",
       username: " admin ",
+      proxyJump: " user@bastion:22 ",
       notes: "  local notes  ",
       tagText: "Linux, prod, linux, storage ",
     });
@@ -44,6 +80,7 @@ describe("server form helpers", () => {
       port: 2222,
       username: "admin",
       identityFileId: null,
+      proxyJump: "user@bastion:22",
       groupId: null,
       notes: "local notes",
       favorite: false,

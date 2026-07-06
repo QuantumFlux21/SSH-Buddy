@@ -105,6 +105,7 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
         port: input.port,
         username: input.username,
         identityFileId: input.identityFileId ?? null,
+        proxyJump: input.proxyJump ?? null,
         groupId: input.groupId ?? null,
         notes: input.notes ?? null,
         favorite: input.favorite,
@@ -183,6 +184,9 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
       }
       if (key) {
         parts.push("-i", key.path);
+      }
+      if (server.proxyJump) {
+        parts.push("-J", server.proxyJump);
       }
       parts.push(`${server.username ? `${server.username}@` : ""}${server.host}`);
       return parts.join(" ") as T;

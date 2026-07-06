@@ -22,6 +22,7 @@ export function filterServers(
       server.displayName,
       server.host,
       server.username,
+      server.proxyJump ?? "",
       server.notes ?? "",
       groupMap.get(server.groupId ?? "") ?? "",
       ...server.tags.map((tag) => tag.name),

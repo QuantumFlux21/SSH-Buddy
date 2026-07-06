@@ -24,6 +24,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "003_server_web_links",
         include_str!("../migrations/003_server_web_links.sql"),
     ),
+    (
+        "004_server_proxy_jump",
+        include_str!("../migrations/004_server_proxy_jump.sql"),
+    ),
 ];
 
 #[derive(Debug)]
@@ -86,7 +90,7 @@ impl Database {
         let mut stmt = conn
             .prepare(
                 "
-                SELECT id, display_name, host, port, username, identity_file_id, group_id,
+                SELECT id, display_name, host, port, username, identity_file_id, proxy_jump, group_id,
                        notes, favorite, created_at, updated_at
                 FROM server_profiles
                 ORDER BY favorite DESC, display_name COLLATE NOCASE ASC
@@ -102,12 +106,13 @@ impl Database {
                     port: row.get::<_, i64>(3)? as u16,
                     username: row.get(4)?,
                     identity_file_id: row.get(5)?,
-                    group_id: row.get(6)?,
-                    notes: row.get(7)?,
-                    favorite: row.get::<_, i64>(8)? == 1,
+                    proxy_jump: row.get(6)?,
+                    group_id: row.get(7)?,
+                    notes: row.get(8)?,
+                    favorite: row.get::<_, i64>(9)? == 1,
                     tags: Vec::new(),
-                    created_at: row.get(9)?,
-                    updated_at: row.get(10)?,
+                    created_at: row.get(10)?,
+                    updated_at: row.get(11)?,
                 })
             })
             .map_err(to_error)?;
@@ -139,9 +144,9 @@ impl Database {
             tx.execute(
                 "
                 INSERT INTO server_profiles (
-                  id, display_name, host, port, username, identity_file_id, group_id,
+                  id, display_name, host, port, username, identity_file_id, proxy_jump, group_id,
                   notes, favorite, created_at, updated_at
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
                 ",
                 params![
                     id,
@@ -150,6 +155,7 @@ impl Database {
                     input.port as i64,
                     input.username.trim(),
                     normalize_optional(input.identity_file_id),
+                    normalize_optional(input.proxy_jump),
                     normalize_optional(input.group_id),
                     normalize_notes(input.notes),
                     bool_to_i64(input.favorite),
@@ -187,11 +193,12 @@ impl Database {
                         port = ?3,
                         username = ?4,
                         identity_file_id = ?5,
-                        group_id = ?6,
-                        notes = ?7,
-                        favorite = ?8,
-                        updated_at = ?9
-                    WHERE id = ?10
+                        proxy_jump = ?6,
+                        group_id = ?7,
+                        notes = ?8,
+                        favorite = ?9,
+                        updated_at = ?10
+                    WHERE id = ?11
                     ",
                     params![
                         normalize_text(&input.display_name).unwrap(),
@@ -199,6 +206,7 @@ impl Database {
                         input.port as i64,
                         input.username.trim(),
                         normalize_optional(input.identity_file_id),
+                        normalize_optional(input.proxy_jump),
                         normalize_optional(input.group_id),
                         normalize_notes(input.notes),
                         bool_to_i64(input.favorite),
@@ -629,6 +637,25 @@ impl Database {
         .map_err(to_error)
     }
 
+    #[cfg(test)]
+    pub fn column_exists(&self, table_name: &str, column_name: &str) -> AppResult<bool> {
+        let conn = self.lock()?;
+        let mut stmt = conn
+            .prepare(&format!("PRAGMA table_info({table_name})"))
+            .map_err(to_error)?;
+        let rows = stmt
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(to_error)?;
+
+        for row in rows {
+            if row.map_err(to_error)? == column_name {
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
+    }
+
     fn lock(&self) -> AppResult<MutexGuard<'_, Connection>> {
         self.conn
             .lock()
@@ -752,7 +779,7 @@ fn get_server_by_id(conn: &Connection, id: &str) -> AppResult<Option<ServerProfi
     let mut server = conn
         .query_row(
             "
-            SELECT id, display_name, host, port, username, identity_file_id, group_id,
+            SELECT id, display_name, host, port, username, identity_file_id, proxy_jump, group_id,
                    notes, favorite, created_at, updated_at
             FROM server_profiles
             WHERE id = ?1
@@ -766,12 +793,13 @@ fn get_server_by_id(conn: &Connection, id: &str) -> AppResult<Option<ServerProfi
                     port: row.get::<_, i64>(3)? as u16,
                     username: row.get(4)?,
                     identity_file_id: row.get(5)?,
-                    group_id: row.get(6)?,
-                    notes: row.get(7)?,
-                    favorite: row.get::<_, i64>(8)? == 1,
+                    proxy_jump: row.get(6)?,
+                    group_id: row.get(7)?,
+                    notes: row.get(8)?,
+                    favorite: row.get::<_, i64>(9)? == 1,
                     tags: Vec::new(),
-                    created_at: row.get(9)?,
-                    updated_at: row.get(10)?,
+                    created_at: row.get(10)?,
+                    updated_at: row.get(11)?,
                 })
             },
         )
@@ -904,6 +932,7 @@ mod tests {
             port: 22,
             username: "admin".to_string(),
             identity_file_id: None,
+            proxy_jump: Some("bastion".to_string()),
             group_id: None,
             notes: Some("local metadata".to_string()),
             favorite: false,
@@ -928,6 +957,7 @@ mod tests {
         ] {
             assert!(db.table_exists(table).unwrap(), "{table} should exist");
         }
+        assert!(db.column_exists("server_profiles", "proxy_jump").unwrap());
     }
 
     #[test]
@@ -962,14 +992,17 @@ mod tests {
         let db = test_db();
         let created = db.create_server(server_input()).unwrap();
         assert_eq!(created.display_name, "NAS");
+        assert_eq!(created.proxy_jump.as_deref(), Some("bastion"));
         assert_eq!(created.tags.len(), 2);
 
         let mut update = server_input();
         update.display_name = "NAS Updated".to_string();
+        update.proxy_jump = Some("admin@jump.local:2222".to_string());
         update.favorite = true;
         update.tag_names = vec!["prod".to_string()];
         let updated = db.update_server(&created.id, update).unwrap();
         assert_eq!(updated.display_name, "NAS Updated");
+        assert_eq!(updated.proxy_jump.as_deref(), Some("admin@jump.local:2222"));
         assert!(updated.favorite);
         assert_eq!(updated.tags[0].name, "prod");
 

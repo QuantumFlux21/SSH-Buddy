@@ -39,6 +39,7 @@ export interface ServerProfile {
   port: number;
   username: string;
   identityFileId: string | null;
+  proxyJump: string | null;
   groupId: string | null;
   notes: string | null;
   favorite: boolean;
@@ -66,6 +67,7 @@ export interface ServerInput {
   port: number;
   username: string;
   identityFileId?: string | null;
+  proxyJump?: string | null;
   groupId?: string | null;
   notes?: string | null;
   favorite: boolean;
