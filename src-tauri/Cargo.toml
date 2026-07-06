@@ -5,6 +5,9 @@ description = "A fast, modern SSH manager for homelab users."
 authors = ["ssh-buddy contributors"]
 edition = "2021"
 license = "MIT OR Apache-2.0"
+repository = "https://github.com/QuantumFlux21/SSH-Buddy"
+homepage = "https://github.com/QuantumFlux21/SSH-Buddy"
+readme = "../README.md"
 build = "build.rs"
 
 [build-dependencies]
