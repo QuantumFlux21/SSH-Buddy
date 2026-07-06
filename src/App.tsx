@@ -198,7 +198,7 @@ export default function App() {
         <div className="boot-mark">
           <Terminal size={34} />
         </div>
-        <p>Loading ssh-buddy...</p>
+        <p>Loading SSH-Buddy...</p>
         {error ? <p className="error-text">{error}</p> : null}
       </div>
     );
@@ -212,7 +212,7 @@ export default function App() {
             <Terminal size={22} />
           </div>
           <div>
-            <strong>ssh-buddy</strong>
+            <strong>SSH-Buddy</strong>
             <span>Homelab SSH manager</span>
           </div>
         </div>
@@ -507,7 +507,7 @@ function ServerDetails({
           <ShieldAlert size={20} />
           <div>
             <h3>Security posture</h3>
-            <p>Private keys and passphrases stay outside ssh-buddy. Use OpenSSH, ssh-agent, and normal terminal prompts.</p>
+            <p>Private keys and passphrases stay outside SSH-Buddy. Use OpenSSH, ssh-agent, and normal terminal prompts.</p>
           </div>
         </section>
 
@@ -842,7 +842,7 @@ function SettingsPanel({
         <div>
           <h3>Sudo and root workflows</h3>
           <p>
-            ssh-buddy does not automate sudo or store privileged credentials. Use normal sudo prompts, or carefully scoped sudoers rules for exact
+            SSH-Buddy does not automate sudo or store privileged credentials. Use normal sudo prompts, or carefully scoped sudoers rules for exact
             commands when you intentionally need passwordless homelab automation.
           </p>
         </div>

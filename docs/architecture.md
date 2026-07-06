@@ -1,6 +1,6 @@
 # Architecture
 
-`ssh-buddy` is split into a React frontend and a Rust backend through Tauri commands.
+SSH-Buddy is split into a React frontend and a Rust backend through Tauri commands.
 
 ## Frontend
 
@@ -10,8 +10,8 @@
 
 ## Backend
 
-- Owns SQLite persistence, migrations, validation, SSH config import, SSH command construction, external terminal launch, and web URL opening.
-- Stores app data in the OS app data directory.
+- Will own SQLite persistence, migrations, validation, SSH config import, SSH command construction, external terminal launch, and web URL opening.
+- Will store app data in the OS app data directory.
 - Uses argv arrays for process execution.
 
 ## Data Model
@@ -24,4 +24,4 @@
 - `WebLink`: named web admin URL attached to a server.
 - `AppSettings`: terminal and safety preferences.
 
-Only `ssh`, `copy-command`, and `web` actions are implemented in the MVP.
+Only `ssh`, `copy-command`, and `web` actions are planned for the MVP.
