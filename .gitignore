@@ -1,0 +1,71 @@
+node_modules/
+dist/
+src-tauri/target/
+src-tauri/gen/
+*.log
+.DS_Store
+.idea/
+.vscode/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+# Dependencies
+node_modules/
+
+# Frontend build output
+dist/
+dist-ssr/
+.vite/
+coverage/
+
+# Tauri / Rust build output
+src-tauri/target/
+target/
+
+# Rust temporary/editor backup files
+**/*.rs.bk
+
+# SQLite / local app databases
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+*.sqlite-journal
+*.sqlite-shm
+*.sqlite-wal
+
+# Local app data / test data
+.local/
+data/
+tmp/
+temp/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor / IDE
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.example.json
+
+# Misc
+*.swp
+*.swo
