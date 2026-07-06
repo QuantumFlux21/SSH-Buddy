@@ -89,6 +89,7 @@ pub struct RdpSettings {
     pub port: u16,
     pub fullscreen: bool,
     pub multi_monitor: bool,
+    pub monitor_ids: Option<String>,
     pub width: Option<u16>,
     pub height: Option<u16>,
     pub color_depth: Option<u16>,
@@ -189,6 +190,7 @@ pub struct RdpSettingsInput {
     pub port: Option<u32>,
     pub fullscreen: bool,
     pub multi_monitor: bool,
+    pub monitor_ids: Option<String>,
     pub width: Option<u32>,
     pub height: Option<u32>,
     pub color_depth: Option<u32>,
@@ -493,6 +495,13 @@ pub fn validate_rdp_settings_input(input: &RdpSettingsInput) -> AppResult<()> {
         validate_rdp_text_field(domain, "RDP domain")?;
     }
 
+    if let Some(monitor_ids) = &input.monitor_ids {
+        validate_rdp_monitor_ids(monitor_ids)?;
+        if normalize_text(monitor_ids).is_some() && !input.multi_monitor {
+            return Err("RDP monitor IDs require multi-monitor".to_string());
+        }
+    }
+
     match (input.width, input.height) {
         (None, None) => {}
         (Some(width), Some(height)) => {
@@ -511,6 +520,10 @@ pub fn validate_rdp_settings_input(input: &RdpSettingsInput) -> AppResult<()> {
     Ok(())
 }
 
+pub fn normalize_rdp_monitor_ids(value: Option<String>) -> Option<String> {
+    value.and_then(|item| normalize_text(&item))
+}
+
 fn validate_rdp_port(port: u32) -> AppResult<()> {
     if (1..=65_535).contains(&port) {
         Ok(())
@@ -525,6 +538,29 @@ fn validate_rdp_dimension(value: u32, label: &str) -> AppResult<()> {
     } else {
         Err(format!("{label} must be between 320 and 16384"))
     }
+}
+
+pub fn validate_rdp_monitor_ids(value: &str) -> AppResult<()> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Ok(());
+    }
+
+    if trimmed != value || trimmed.chars().any(char::is_whitespace) {
+        return Err("RDP monitor IDs must not contain whitespace".to_string());
+    }
+
+    for entry in trimmed.split(',') {
+        if entry.is_empty() {
+            return Err("RDP monitor IDs must not contain empty entries".to_string());
+        }
+
+        if !entry.chars().all(|character| character.is_ascii_digit()) {
+            return Err("RDP monitor IDs must be comma-separated monitor numbers".to_string());
+        }
+    }
+
+    Ok(())
 }
 
 fn validate_rdp_text_field(value: &str, label: &str) -> AppResult<()> {
@@ -678,7 +714,8 @@ mod tests {
             domain: Some("LAB".to_string()),
             port: Some(3389),
             fullscreen: false,
-            multi_monitor: false,
+            multi_monitor: true,
+            monitor_ids: Some("0,1".to_string()),
             width: Some(1920),
             height: Some(1080),
             color_depth: Some(32),
@@ -769,6 +806,34 @@ mod tests {
         assert_eq!(
             validate_rdp_settings_input(&input).unwrap_err(),
             "RDP color depth must be 16, 24, or 32"
+        );
+
+        let mut input = valid_rdp_settings_input();
+        input.monitor_ids = Some("0, 1".to_string());
+        assert_eq!(
+            validate_rdp_settings_input(&input).unwrap_err(),
+            "RDP monitor IDs must not contain whitespace"
+        );
+
+        let mut input = valid_rdp_settings_input();
+        input.monitor_ids = Some("0,,1".to_string());
+        assert_eq!(
+            validate_rdp_settings_input(&input).unwrap_err(),
+            "RDP monitor IDs must not contain empty entries"
+        );
+
+        let mut input = valid_rdp_settings_input();
+        input.monitor_ids = Some("-1".to_string());
+        assert_eq!(
+            validate_rdp_settings_input(&input).unwrap_err(),
+            "RDP monitor IDs must be comma-separated monitor numbers"
+        );
+
+        let mut input = valid_rdp_settings_input();
+        input.multi_monitor = false;
+        assert_eq!(
+            validate_rdp_settings_input(&input).unwrap_err(),
+            "RDP monitor IDs require multi-monitor"
         );
     }
 

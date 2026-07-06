@@ -7,9 +7,9 @@ use std::{
 };
 
 use crate::domain::{
-    normalize_tunnel_bind_host, validate_proxy_jump, validate_tunnel_input, AppResult, AppSettings,
-    RdpSettings, ServerProfile, Tunnel, TunnelInput, SUPPORTED_TERMINAL_PREFERENCES,
-    TERMINAL_PREFERENCE_AUTO,
+    normalize_tunnel_bind_host, validate_proxy_jump, validate_rdp_monitor_ids,
+    validate_tunnel_input, AppResult, AppSettings, RdpSettings, ServerProfile, Tunnel, TunnelInput,
+    SUPPORTED_TERMINAL_PREFERENCES, TERMINAL_PREFERENCE_AUTO,
 };
 
 const TERMINAL_ORDER: &[&str] = &[
@@ -85,6 +85,10 @@ pub fn build_rdp_argv(
         argv.push("/multimon".to_string());
     }
 
+    if let Some(monitor_ids) = settings.monitor_ids.as_deref().and_then(normalize_optional) {
+        argv.push(format!("/monitors:{monitor_ids}"));
+    }
+
     if let Some(width) = settings.width {
         argv.push(format!("/w:{width}"));
     }
@@ -153,6 +157,13 @@ fn validate_rdp_settings_for_launch(settings: &RdpSettings) -> AppResult<()> {
     if let Some(color_depth) = settings.color_depth {
         if !matches!(color_depth, 16 | 24 | 32) {
             return Err("RDP color depth must be 16, 24, or 32".to_string());
+        }
+    }
+
+    if let Some(monitor_ids) = settings.monitor_ids.as_deref() {
+        validate_rdp_monitor_ids(monitor_ids)?;
+        if normalize_optional(monitor_ids).is_some() && !settings.multi_monitor {
+            return Err("RDP monitor IDs require multi-monitor".to_string());
         }
     }
 
@@ -658,6 +669,7 @@ mod tests {
             port: 3390,
             fullscreen: false,
             multi_monitor: true,
+            monitor_ids: Some("0,1".to_string()),
             width: Some(1920),
             height: Some(1080),
             color_depth: Some(32),
@@ -763,6 +775,7 @@ mod tests {
                 "/u:rdpuser",
                 "/d:LAB",
                 "/multimon",
+                "/monitors:0,1",
                 "/w:1920",
                 "/h:1080",
                 "/bpp:32"
@@ -779,6 +792,7 @@ mod tests {
         settings.port = 3389;
         settings.fullscreen = true;
         settings.multi_monitor = false;
+        settings.monitor_ids = None;
         settings.width = None;
         settings.height = None;
         settings.color_depth = None;
@@ -847,7 +861,7 @@ mod tests {
 
         assert_eq!(
             command,
-            "xfreerdp3 /v:nas.local:3390 '/u:Lab User' /d:LAB /multimon /w:1920 /h:1080 /bpp:32"
+            "xfreerdp3 /v:nas.local:3390 '/u:Lab User' /d:LAB /multimon /monitors:0,1 /w:1920 /h:1080 /bpp:32"
         );
     }
 
@@ -903,6 +917,20 @@ mod tests {
         assert_eq!(
             build_rdp_argv("xfreerdp3", &sample_server(), &settings).unwrap_err(),
             "RDP color depth must be 16, 24, or 32"
+        );
+
+        let mut settings = sample_rdp_settings();
+        settings.monitor_ids = Some("0;1".to_string());
+        assert_eq!(
+            build_rdp_argv("xfreerdp3", &sample_server(), &settings).unwrap_err(),
+            "RDP monitor IDs must be comma-separated monitor numbers"
+        );
+
+        let mut settings = sample_rdp_settings();
+        settings.multi_monitor = false;
+        assert_eq!(
+            build_rdp_argv("xfreerdp3", &sample_server(), &settings).unwrap_err(),
+            "RDP monitor IDs require multi-monitor"
         );
     }
 
@@ -1056,6 +1084,7 @@ mod tests {
         assert_eq!(command.program, "xfreerdp");
         assert_eq!(command.args[0], "/v:nas.local:3390");
         assert!(command.args.contains(&"/u:rdpuser".to_string()));
+        assert!(command.args.contains(&"/monitors:0,1".to_string()));
         assert!(!command.args.iter().any(|arg| arg.starts_with("/p:")));
     }
 

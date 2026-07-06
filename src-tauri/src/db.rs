@@ -7,12 +7,13 @@ use std::{
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 
 use crate::domain::{
-    default_settings, new_id, normalize_notes, normalize_optional, normalize_tag_names,
-    normalize_text, normalize_tunnel_bind_host, now_timestamp, validate_app_settings,
-    validate_group_input, validate_rdp_settings_input, validate_server_input,
-    validate_ssh_key_input, validate_tunnel_input, validate_web_link_input, AppResult, AppSettings,
-    Group, GroupInput, RdpSettings, RdpSettingsInput, ServerInput, ServerProfile, SshKeyInput,
-    SshKeyRef, Tag, Tunnel, TunnelInput, WebLink, WebLinkInput, DEFAULT_RDP_PORT,
+    default_settings, new_id, normalize_notes, normalize_optional, normalize_rdp_monitor_ids,
+    normalize_tag_names, normalize_text, normalize_tunnel_bind_host, now_timestamp,
+    validate_app_settings, validate_group_input, validate_rdp_settings_input,
+    validate_server_input, validate_ssh_key_input, validate_tunnel_input, validate_web_link_input,
+    AppResult, AppSettings, Group, GroupInput, RdpSettings, RdpSettingsInput, ServerInput,
+    ServerProfile, SshKeyInput, SshKeyRef, Tag, Tunnel, TunnelInput, WebLink, WebLinkInput,
+    DEFAULT_RDP_PORT,
 };
 
 const MIGRATIONS: &[(&str, &str)] = &[
@@ -36,6 +37,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
     (
         "006_server_rdp_settings",
         include_str!("../migrations/006_server_rdp_settings.sql"),
+    ),
+    (
+        "007_rdp_monitor_ids",
+        include_str!("../migrations/007_rdp_monitor_ids.sql"),
     ),
 ];
 
@@ -768,8 +773,8 @@ impl Database {
             "
             INSERT INTO server_rdp_settings (
               server_profile_id, enabled, username, domain, port, fullscreen,
-              multi_monitor, width, height, color_depth, created_at, updated_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11)
+              multi_monitor, monitor_ids, width, height, color_depth, created_at, updated_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12)
             ON CONFLICT(server_profile_id) DO UPDATE SET
               enabled = excluded.enabled,
               username = excluded.username,
@@ -777,6 +782,7 @@ impl Database {
               port = excluded.port,
               fullscreen = excluded.fullscreen,
               multi_monitor = excluded.multi_monitor,
+              monitor_ids = excluded.monitor_ids,
               width = excluded.width,
               height = excluded.height,
               color_depth = excluded.color_depth,
@@ -790,6 +796,7 @@ impl Database {
                 input.port.unwrap_or(u32::from(DEFAULT_RDP_PORT)) as i64,
                 bool_to_i64(input.fullscreen),
                 bool_to_i64(input.multi_monitor),
+                normalize_rdp_monitor_ids(input.monitor_ids),
                 input.width.map(|value| value as i64),
                 input.height.map(|value| value as i64),
                 input.color_depth.map(|value| value as i64),
@@ -1100,7 +1107,7 @@ fn get_rdp_settings_by_server(
     conn.query_row(
         "
         SELECT server_profile_id, enabled, username, domain, port, fullscreen, multi_monitor,
-               width, height, color_depth, created_at, updated_at
+               monitor_ids, width, height, color_depth, created_at, updated_at
         FROM server_rdp_settings
         WHERE server_profile_id = ?1
         ",
@@ -1146,11 +1153,12 @@ fn rdp_settings_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RdpSetting
         port: row.get::<_, i64>(4)? as u16,
         fullscreen: row.get::<_, i64>(5)? == 1,
         multi_monitor: row.get::<_, i64>(6)? == 1,
-        width: row.get::<_, Option<i64>>(7)?.map(|value| value as u16),
-        height: row.get::<_, Option<i64>>(8)?.map(|value| value as u16),
-        color_depth: row.get::<_, Option<i64>>(9)?.map(|value| value as u16),
-        created_at: row.get(10)?,
-        updated_at: row.get(11)?,
+        monitor_ids: row.get(7)?,
+        width: row.get::<_, Option<i64>>(8)?.map(|value| value as u16),
+        height: row.get::<_, Option<i64>>(9)?.map(|value| value as u16),
+        color_depth: row.get::<_, Option<i64>>(10)?.map(|value| value as u16),
+        created_at: row.get(11)?,
+        updated_at: row.get(12)?,
     })
 }
 
@@ -1235,6 +1243,9 @@ mod tests {
             assert!(db.table_exists(table).unwrap(), "{table} should exist");
         }
         assert!(db.column_exists("server_profiles", "proxy_jump").unwrap());
+        assert!(db
+            .column_exists("server_rdp_settings", "monitor_ids")
+            .unwrap());
     }
 
     #[test]
@@ -1344,6 +1355,7 @@ mod tests {
             port: Some(3390),
             fullscreen: false,
             multi_monitor: true,
+            monitor_ids: Some("0,1".to_string()),
             width: Some(1920),
             height: Some(1080),
             color_depth: Some(32),
@@ -1395,6 +1407,7 @@ mod tests {
         assert_eq!(created.domain.as_deref(), Some("LAB"));
         assert_eq!(created.port, 3390);
         assert!(created.multi_monitor);
+        assert_eq!(created.monitor_ids.as_deref(), Some("0,1"));
         assert_eq!(created.width, Some(1920));
         assert_eq!(created.height, Some(1080));
         assert_eq!(created.color_depth, Some(32));
@@ -1409,6 +1422,7 @@ mod tests {
                     port: None,
                     fullscreen: true,
                     multi_monitor: false,
+                    monitor_ids: None,
                     width: None,
                     height: None,
                     color_depth: Some(24),
@@ -1469,6 +1483,13 @@ mod tests {
         assert_eq!(
             db.save_rdp_settings(&server.id, input).unwrap_err(),
             "RDP color depth must be 16, 24, or 32"
+        );
+
+        let mut input = rdp_settings_input();
+        input.monitor_ids = Some("0;1".to_string());
+        assert_eq!(
+            db.save_rdp_settings(&server.id, input).unwrap_err(),
+            "RDP monitor IDs must be comma-separated monitor numbers"
         );
     }
 

@@ -17,6 +17,19 @@ describe("RDP form helpers", () => {
     expect(validateRdpSettingsForm({ ...newRdpSettingsDraft(), colorDepth: "8" as "16" }).colorDepth).toBe(
       "Color depth must be 16, 24, or 32.",
     );
+    expect(validateRdpSettingsForm({ ...newRdpSettingsDraft(), multiMonitor: true, monitorIds: "0,1" }).monitorIds).toBeUndefined();
+    expect(validateRdpSettingsForm({ ...newRdpSettingsDraft(), multiMonitor: true, monitorIds: "0, 1" }).monitorIds).toBe(
+      "Monitor IDs must not contain whitespace.",
+    );
+    expect(validateRdpSettingsForm({ ...newRdpSettingsDraft(), multiMonitor: true, monitorIds: "0,,1" }).monitorIds).toBe(
+      "Monitor IDs must not contain empty entries.",
+    );
+    expect(validateRdpSettingsForm({ ...newRdpSettingsDraft(), multiMonitor: true, monitorIds: "-1" }).monitorIds).toBe(
+      "Monitor IDs must be comma-separated monitor numbers.",
+    );
+    expect(validateRdpSettingsForm({ ...newRdpSettingsDraft(), multiMonitor: false, monitorIds: "0,1" }).monitorIds).toBe(
+      "Monitor IDs require multi-monitor.",
+    );
   });
 
   it("converts empty fields without storing passwords", () => {
@@ -36,6 +49,7 @@ describe("RDP form helpers", () => {
       port: 3389,
       fullscreen: false,
       multiMonitor: false,
+      monitorIds: null,
       width: 1280,
       height: 720,
       colorDepth: 24,
@@ -52,6 +66,7 @@ describe("RDP form helpers", () => {
       port: 3389,
       fullscreen: false,
       multiMonitor: true,
+      monitorIds: "0,1",
       width: 1920,
       height: 1080,
       colorDepth: 32,
@@ -59,6 +74,6 @@ describe("RDP form helpers", () => {
       updatedAt: "2026-01-01T00:00:00.000Z",
     };
 
-    expect(rdpSettingsSummary(settings)).toBe("1920x1080, multi-monitor, 32 bpp");
+    expect(rdpSettingsSummary(settings)).toBe("1920x1080, multi-monitor, monitors 0,1, 32 bpp");
   });
 });

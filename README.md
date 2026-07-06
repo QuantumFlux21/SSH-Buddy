@@ -162,7 +162,7 @@ For compatibility, SFTP commands use `-P <port>` for non-default ports, `-i <ide
 
 ## RDP External Launch
 
-SSH-Buddy can store per-server RDP launch settings and start FreeRDP externally using `xfreerdp3` when available, then `xfreerdp`. RDP settings can include username, domain, port, fullscreen, multi-monitor, dimensions, and color depth.
+SSH-Buddy can store per-server RDP launch settings and start FreeRDP externally using `xfreerdp3` when available, then `xfreerdp`. RDP settings can include username, domain, port, fullscreen, multi-monitor, optional monitor IDs such as `0,1`, dimensions, and color depth.
 
 RDP commands are built from saved profile data only, for example `xfreerdp3 /v:host:3389 /u:username`. SSH-Buddy never stores or passes `/p:` password arguments. FreeRDP prompts interactively for credentials when needed.
 

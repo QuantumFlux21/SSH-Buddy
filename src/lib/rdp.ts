@@ -7,12 +7,13 @@ export interface RdpSettingsFormModel {
   port: string;
   fullscreen: boolean;
   multiMonitor: boolean;
+  monitorIds: string;
   width: string;
   height: string;
   colorDepth: "" | "16" | "24" | "32";
 }
 
-export type RdpFormErrors = Partial<Record<"port" | "width" | "height" | "colorDepth", string>>;
+export type RdpFormErrors = Partial<Record<"port" | "monitorIds" | "width" | "height" | "colorDepth", string>>;
 
 export const newRdpSettingsDraft = (settings?: RdpSettings | null): RdpSettingsFormModel => ({
   enabled: settings?.enabled ?? true,
@@ -21,6 +22,7 @@ export const newRdpSettingsDraft = (settings?: RdpSettings | null): RdpSettingsF
   port: String(settings?.port ?? 3389),
   fullscreen: settings?.fullscreen ?? false,
   multiMonitor: settings?.multiMonitor ?? false,
+  monitorIds: settings?.monitorIds ?? "",
   width: settings?.width ? String(settings.width) : "",
   height: settings?.height ? String(settings.height) : "",
   colorDepth: settings?.colorDepth ? (String(settings.colorDepth) as RdpSettingsFormModel["colorDepth"]) : "",
@@ -34,6 +36,7 @@ export function toRdpSettingsInput(form: RdpSettingsFormModel): RdpSettingsInput
     port: parseOptionalNumber(form.port) ?? 3389,
     fullscreen: form.fullscreen,
     multiMonitor: form.multiMonitor,
+    monitorIds: form.monitorIds.trim() || null,
     width: parseOptionalNumber(form.width),
     height: parseOptionalNumber(form.height),
     colorDepth: parseOptionalNumber(form.colorDepth),
@@ -66,6 +69,11 @@ export function validateRdpSettingsForm(form: RdpSettingsFormModel): RdpFormErro
     errors.colorDepth = "Color depth must be 16, 24, or 32.";
   }
 
+  const monitorIdsError = validateMonitorIds(form.monitorIds, form.multiMonitor);
+  if (monitorIdsError) {
+    errors.monitorIds = monitorIdsError;
+  }
+
   return errors;
 }
 
@@ -75,11 +83,40 @@ export function hasRdpFormErrors(errors: RdpFormErrors) {
 
 export function rdpSettingsSummary(settings: RdpSettings) {
   const mode = settings.fullscreen ? "Fullscreen" : settings.width && settings.height ? `${settings.width}x${settings.height}` : "Windowed";
-  const extras = [settings.multiMonitor ? "multi-monitor" : null, settings.colorDepth ? `${settings.colorDepth} bpp` : null]
+  const extras = [
+    settings.multiMonitor ? "multi-monitor" : null,
+    settings.monitorIds ? `monitors ${settings.monitorIds}` : null,
+    settings.colorDepth ? `${settings.colorDepth} bpp` : null,
+  ]
     .filter(Boolean)
     .join(", ");
 
   return extras ? `${mode}, ${extras}` : mode;
+}
+
+function validateMonitorIds(value: string, multiMonitor: boolean) {
+  if (!value) {
+    return null;
+  }
+
+  if (value.trim() !== value || /\s/.test(value)) {
+    return "Monitor IDs must not contain whitespace.";
+  }
+
+  if (!multiMonitor) {
+    return "Monitor IDs require multi-monitor.";
+  }
+
+  const entries = value.split(",");
+  if (entries.some((entry) => !entry)) {
+    return "Monitor IDs must not contain empty entries.";
+  }
+
+  if (entries.some((entry) => !/^\d+$/.test(entry))) {
+    return "Monitor IDs must be comma-separated monitor numbers.";
+  }
+
+  return null;
 }
 
 function parseOptionalNumber(value: string) {

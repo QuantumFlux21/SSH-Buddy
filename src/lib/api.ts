@@ -254,6 +254,7 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
         port: input.port ?? 3389,
         fullscreen: input.fullscreen,
         multiMonitor: input.multiMonitor,
+        monitorIds: input.monitorIds?.trim() || null,
         width: input.width ?? null,
         height: input.height ?? null,
         colorDepth: input.colorDepth ?? null,
@@ -295,6 +296,9 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
       }
       if (settings.multiMonitor) {
         parts.push("/multimon");
+      }
+      if (settings.monitorIds) {
+        parts.push(`/monitors:${settings.monitorIds}`);
       }
       if (settings.width) {
         parts.push(`/w:${settings.width}`);

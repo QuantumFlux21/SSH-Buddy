@@ -53,6 +53,7 @@ export interface RdpSettings {
   port: number;
   fullscreen: boolean;
   multiMonitor: boolean;
+  monitorIds: string | null;
   width: number | null;
   height: number | null;
   colorDepth: number | null;
@@ -135,6 +136,7 @@ export interface RdpSettingsInput {
   port?: number | null;
   fullscreen: boolean;
   multiMonitor: boolean;
+  monitorIds?: string | null;
   width?: number | null;
   height?: number | null;
   colorDepth?: number | null;

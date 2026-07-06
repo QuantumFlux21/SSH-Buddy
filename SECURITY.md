@@ -54,7 +54,7 @@ SFTP support delegates file-transfer behavior to the system OpenSSH `sftp` clien
 
 ## RDP Safety
 
-RDP support delegates remote desktop behavior to FreeRDP through `xfreerdp3` or `xfreerdp`. SSH-Buddy stores only launch metadata such as username, domain, port, display mode, dimensions, and color depth. It does not store RDP passwords and does not pass `/p:` arguments. FreeRDP prompts interactively when credentials are required.
+RDP support delegates remote desktop behavior to FreeRDP through `xfreerdp3` or `xfreerdp`. SSH-Buddy stores only launch metadata such as username, domain, port, display mode, monitor IDs, dimensions, and color depth. Monitor IDs are validated as comma-separated monitor numbers and are not an arbitrary FreeRDP option field. SSH-Buddy does not store RDP passwords and does not pass `/p:` arguments. FreeRDP prompts interactively when credentials are required.
 
 RDP settings are separate from SSH/SFTP assumptions. SSH keys, ssh-agent, ProxyJump, and sudo/root workflows do not authenticate RDP.
 

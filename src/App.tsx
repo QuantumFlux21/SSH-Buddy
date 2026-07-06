@@ -1252,6 +1252,22 @@ function RdpSettingsForm({
           <input type="checkbox" checked={draft.multiMonitor} onChange={(event) => update("multiMonitor", event.target.checked)} />
           Multi-monitor
         </label>
+        <label className="span-2">
+          Monitor IDs
+          <input
+            value={draft.monitorIds}
+            onChange={(event) => update("monitorIds", event.target.value)}
+            placeholder="0,1"
+            aria-invalid={submitted && Boolean(errors.monitorIds)}
+            aria-describedby={submitted && errors.monitorIds ? "rdp-monitor-ids-error" : undefined}
+          />
+          <span className="field-hint">Optional. Example: 0,1. Requires multi-monitor.</span>
+          {submitted && errors.monitorIds ? (
+            <span className="field-error" id="rdp-monitor-ids-error">
+              {errors.monitorIds}
+            </span>
+          ) : null}
+        </label>
       </div>
       <p className="field-hint">No password field is provided. FreeRDP prompts interactively when credentials are needed.</p>
       <div className="modal-actions">
