@@ -8,10 +8,10 @@ use rusqlite::{params, Connection, OptionalExtension, Transaction};
 
 use crate::domain::{
     default_settings, new_id, normalize_notes, normalize_optional, normalize_tag_names,
-    normalize_text, now_timestamp, validate_app_settings, validate_group_input,
-    validate_server_input, validate_ssh_key_input, validate_web_link_input, AppResult, AppSettings,
-    Group, GroupInput, ServerInput, ServerProfile, SshKeyInput, SshKeyRef, Tag, WebLink,
-    WebLinkInput,
+    normalize_text, normalize_tunnel_bind_host, now_timestamp, validate_app_settings,
+    validate_group_input, validate_server_input, validate_ssh_key_input, validate_tunnel_input,
+    validate_web_link_input, AppResult, AppSettings, Group, GroupInput, ServerInput, ServerProfile,
+    SshKeyInput, SshKeyRef, Tag, Tunnel, TunnelInput, WebLink, WebLinkInput,
 };
 
 const MIGRATIONS: &[(&str, &str)] = &[
@@ -27,6 +27,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
     (
         "004_server_proxy_jump",
         include_str!("../migrations/004_server_proxy_jump.sql"),
+    ),
+    (
+        "005_server_tunnels",
+        include_str!("../migrations/005_server_tunnels.sql"),
     ),
 ];
 
@@ -625,6 +629,120 @@ impl Database {
         Ok(link)
     }
 
+    pub fn list_tunnels(&self, server_id: &str) -> AppResult<Vec<Tunnel>> {
+        let conn = self.lock()?;
+        ensure_server_exists(&conn, server_id)?;
+        list_tunnels_for_server(&conn, server_id)
+    }
+
+    pub fn create_tunnel(&self, server_id: &str, input: TunnelInput) -> AppResult<Tunnel> {
+        validate_tunnel_input(&input)?;
+
+        let conn = self.lock()?;
+        ensure_server_exists(&conn, server_id)?;
+        let id = new_id();
+        let now = now_timestamp();
+        let tunnel = Tunnel {
+            id,
+            server_profile_id: server_id.to_string(),
+            label: normalize_text(&input.label).unwrap(),
+            tunnel_type: input.tunnel_type.trim().to_string(),
+            local_bind_host: Some(normalize_tunnel_bind_host(input.local_bind_host)),
+            local_port: input.local_port.map(|port| port as u16),
+            remote_host: input.remote_host.and_then(|host| normalize_text(&host)),
+            remote_port: input.remote_port.map(|port| port as u16),
+            created_at: now.clone(),
+            updated_at: now,
+        };
+
+        conn.execute(
+            "
+            INSERT INTO server_tunnels (
+              id, server_profile_id, label, tunnel_type, local_bind_host, local_port,
+              remote_host, remote_port, created_at, updated_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+            ",
+            params![
+                &tunnel.id,
+                &tunnel.server_profile_id,
+                &tunnel.label,
+                &tunnel.tunnel_type,
+                tunnel.local_bind_host.as_deref(),
+                tunnel.local_port.map(i64::from),
+                tunnel.remote_host.as_deref(),
+                tunnel.remote_port.map(i64::from),
+                &tunnel.created_at,
+                &tunnel.updated_at
+            ],
+        )
+        .map_err(to_error)?;
+
+        Ok(tunnel)
+    }
+
+    pub fn update_tunnel(&self, id: &str, input: TunnelInput) -> AppResult<Tunnel> {
+        validate_tunnel_input(&input)?;
+
+        let conn = self.lock()?;
+        let updated = conn
+            .execute(
+                "
+                UPDATE server_tunnels
+                SET label = ?1,
+                    tunnel_type = ?2,
+                    local_bind_host = ?3,
+                    local_port = ?4,
+                    remote_host = ?5,
+                    remote_port = ?6,
+                    updated_at = ?7
+                WHERE id = ?8
+                ",
+                params![
+                    normalize_text(&input.label).unwrap(),
+                    input.tunnel_type.trim(),
+                    normalize_tunnel_bind_host(input.local_bind_host),
+                    input.local_port.map(|port| port as i64),
+                    input.remote_host.and_then(|host| normalize_text(&host)),
+                    input.remote_port.map(|port| port as i64),
+                    now_timestamp(),
+                    id
+                ],
+            )
+            .map_err(to_error)?;
+
+        if updated == 0 {
+            return Err("Tunnel not found".to_string());
+        }
+
+        get_tunnel_by_id(&conn, id)?.ok_or_else(|| "Updated tunnel was not found".to_string())
+    }
+
+    pub fn delete_tunnel(&self, id: &str) -> AppResult<()> {
+        let conn = self.lock()?;
+        let deleted = conn
+            .execute("DELETE FROM server_tunnels WHERE id = ?1", params![id])
+            .map_err(to_error)?;
+
+        if deleted == 0 {
+            return Err("Tunnel not found".to_string());
+        }
+
+        Ok(())
+    }
+
+    pub fn get_tunnel_for_server(&self, server_id: &str, tunnel_id: &str) -> AppResult<Tunnel> {
+        let conn = self.lock()?;
+        ensure_server_exists(&conn, server_id)?;
+        let tunnel =
+            get_tunnel_by_id(&conn, tunnel_id)?.ok_or_else(|| "Tunnel not found".to_string())?;
+
+        if tunnel.server_profile_id != server_id {
+            return Err("Tunnel does not belong to this server".to_string());
+        }
+
+        Ok(tunnel)
+    }
+
     #[cfg(test)]
     pub fn table_exists(&self, table_name: &str) -> AppResult<bool> {
         let conn = self.lock()?;
@@ -857,6 +975,25 @@ fn list_web_links_for_server(conn: &Connection, server_id: &str) -> AppResult<Ve
     collect_rows(rows)
 }
 
+fn list_tunnels_for_server(conn: &Connection, server_id: &str) -> AppResult<Vec<Tunnel>> {
+    let mut stmt = conn
+        .prepare(
+            "
+            SELECT id, server_profile_id, label, tunnel_type, local_bind_host, local_port,
+                   remote_host, remote_port, created_at, updated_at
+            FROM server_tunnels
+            WHERE server_profile_id = ?1
+            ORDER BY label COLLATE NOCASE ASC
+            ",
+        )
+        .map_err(to_error)?;
+    let rows = stmt
+        .query_map(params![server_id], tunnel_from_row)
+        .map_err(to_error)?;
+
+    collect_rows(rows)
+}
+
 fn get_web_link_by_id(conn: &Connection, id: &str) -> AppResult<Option<WebLink>> {
     conn.query_row(
         "
@@ -871,6 +1008,21 @@ fn get_web_link_by_id(conn: &Connection, id: &str) -> AppResult<Option<WebLink>>
     .map_err(to_error)
 }
 
+fn get_tunnel_by_id(conn: &Connection, id: &str) -> AppResult<Option<Tunnel>> {
+    conn.query_row(
+        "
+        SELECT id, server_profile_id, label, tunnel_type, local_bind_host, local_port,
+               remote_host, remote_port, created_at, updated_at
+        FROM server_tunnels
+        WHERE id = ?1
+        ",
+        params![id],
+        tunnel_from_row,
+    )
+    .optional()
+    .map_err(to_error)
+}
+
 fn web_link_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<WebLink> {
     Ok(WebLink {
         id: row.get(0)?,
@@ -879,6 +1031,21 @@ fn web_link_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<WebLink> {
         url: row.get(3)?,
         created_at: row.get(4)?,
         updated_at: row.get(5)?,
+    })
+}
+
+fn tunnel_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Tunnel> {
+    Ok(Tunnel {
+        id: row.get(0)?,
+        server_profile_id: row.get(1)?,
+        label: row.get(2)?,
+        tunnel_type: row.get(3)?,
+        local_bind_host: row.get(4)?,
+        local_port: row.get::<_, Option<i64>>(5)?.map(|port| port as u16),
+        remote_host: row.get(6)?,
+        remote_port: row.get::<_, Option<i64>>(7)?.map(|port| port as u16),
+        created_at: row.get(8)?,
+        updated_at: row.get(9)?,
     })
 }
 
@@ -917,7 +1084,9 @@ fn to_error(error: rusqlite::Error) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{AppSettings, GroupInput, ServerInput, SshKeyInput, WebLinkInput};
+    use crate::domain::{
+        AppSettings, GroupInput, ServerInput, SshKeyInput, TunnelInput, WebLinkInput,
+    };
 
     fn test_db() -> Database {
         let db = Database::open_in_memory().unwrap();
@@ -954,6 +1123,7 @@ mod tests {
             "server_profile_tags",
             "app_settings",
             "server_web_links",
+            "server_tunnels",
         ] {
             assert!(db.table_exists(table).unwrap(), "{table} should exist");
         }
@@ -1048,6 +1218,68 @@ mod tests {
         assert!(db.list_web_links(&server.id).unwrap().is_empty());
     }
 
+    fn tunnel_input() -> TunnelInput {
+        TunnelInput {
+            label: "Postgres".to_string(),
+            tunnel_type: "local".to_string(),
+            local_bind_host: None,
+            local_port: Some(15432),
+            remote_host: Some("db.internal".to_string()),
+            remote_port: Some(5432),
+        }
+    }
+
+    #[test]
+    fn tunnel_crud_round_trip() {
+        let db = test_db();
+        let server = db.create_server(server_input()).unwrap();
+
+        let created = db.create_tunnel(&server.id, tunnel_input()).unwrap();
+        assert_eq!(created.label, "Postgres");
+        assert_eq!(created.server_profile_id, server.id);
+        assert_eq!(created.local_bind_host.as_deref(), Some("127.0.0.1"));
+        assert_eq!(created.local_port, Some(15432));
+        assert_eq!(created.remote_host.as_deref(), Some("db.internal"));
+        assert_eq!(created.remote_port, Some(5432));
+
+        let tunnels = db.list_tunnels(&server.id).unwrap();
+        assert_eq!(tunnels.len(), 1);
+
+        let mut update = tunnel_input();
+        update.label = "HTTP".to_string();
+        update.local_bind_host = Some("0.0.0.0".to_string());
+        update.local_port = Some(18080);
+        update.remote_host = Some("web.internal".to_string());
+        update.remote_port = Some(8080);
+        let updated = db.update_tunnel(&created.id, update).unwrap();
+        assert_eq!(updated.label, "HTTP");
+        assert_eq!(updated.local_bind_host.as_deref(), Some("0.0.0.0"));
+        assert_eq!(updated.local_port, Some(18080));
+
+        db.delete_tunnel(&created.id).unwrap();
+        assert!(db.list_tunnels(&server.id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn rejects_invalid_tunnels() {
+        let db = test_db();
+        let server = db.create_server(server_input()).unwrap();
+
+        let mut input = tunnel_input();
+        input.remote_host = Some("db internal".to_string());
+        assert_eq!(
+            db.create_tunnel(&server.id, input).unwrap_err(),
+            "Remote host must not contain whitespace"
+        );
+
+        let mut input = tunnel_input();
+        input.remote_port = Some(0);
+        assert_eq!(
+            db.create_tunnel(&server.id, input).unwrap_err(),
+            "Remote port must be between 1 and 65535"
+        );
+    }
+
     #[test]
     fn rejects_invalid_web_link_urls() {
         let db = test_db();
@@ -1098,6 +1330,24 @@ mod tests {
             .query_row(
                 "SELECT COUNT(*) FROM server_web_links WHERE id = ?1",
                 params![link.id],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn deleting_server_cascades_tunnels() {
+        let db = test_db();
+        let server = db.create_server(server_input()).unwrap();
+        let tunnel = db.create_tunnel(&server.id, tunnel_input()).unwrap();
+
+        db.delete_server(&server.id).unwrap();
+        let conn = db.lock().unwrap();
+        let count = conn
+            .query_row(
+                "SELECT COUNT(*) FROM server_tunnels WHERE id = ?1",
+                params![tunnel.id],
                 |row| row.get::<_, i64>(0),
             )
             .unwrap();

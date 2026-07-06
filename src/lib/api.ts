@@ -11,6 +11,8 @@ import type {
   SshKeyInput,
   SshKeyRef,
   Tag,
+  Tunnel,
+  TunnelInput,
   WebLink,
   WebLinkInput,
 } from "./types";
@@ -61,6 +63,7 @@ const mockState: AppStateSnapshot = {
   servers: [],
 };
 const mockWebLinks: Record<string, WebLink[]> = {};
+const mockTunnels: Record<string, Tunnel[]> = {};
 
 async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   if (canUseTauri()) {
@@ -126,6 +129,7 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
       const serverId = args?.id as string;
       mockState.servers = mockState.servers.filter((server) => server.id !== serverId);
       delete mockWebLinks[serverId];
+      delete mockTunnels[serverId];
       return undefined as T;
     }
     case "create_group": {
@@ -197,6 +201,107 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
         throw new Error("Server not found");
       }
       throw new Error("SSH launch requires the Tauri desktop app");
+    }
+    case "list_tunnels": {
+      const serverId = args?.serverId as string;
+      if (!mockState.servers.some((server) => server.id === serverId)) {
+        throw new Error("Server not found");
+      }
+      return structuredClone(mockTunnels[serverId] ?? []) as T;
+    }
+    case "create_tunnel": {
+      const serverId = args?.serverId as string;
+      const input = args?.input as TunnelInput;
+      if (!mockState.servers.some((server) => server.id === serverId)) {
+        throw new Error("Server not found");
+      }
+      const timestamp = now();
+      const tunnel: Tunnel = {
+        id: id("tun"),
+        serverProfileId: serverId,
+        label: input.label,
+        tunnelType: input.tunnelType,
+        localBindHost: input.localBindHost || "127.0.0.1",
+        localPort: input.localPort ?? null,
+        remoteHost: input.remoteHost ?? null,
+        remotePort: input.remotePort ?? null,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      };
+      mockTunnels[serverId] = [...(mockTunnels[serverId] ?? []), tunnel];
+      return structuredClone(tunnel) as T;
+    }
+    case "update_tunnel": {
+      const tunnelId = args?.id as string;
+      const input = args?.input as TunnelInput;
+      for (const [serverId, tunnels] of Object.entries(mockTunnels)) {
+        const index = tunnels.findIndex((tunnel) => tunnel.id === tunnelId);
+        if (index >= 0) {
+          const tunnel: Tunnel = {
+            ...tunnels[index],
+            label: input.label,
+            tunnelType: input.tunnelType,
+            localBindHost: input.localBindHost || "127.0.0.1",
+            localPort: input.localPort ?? null,
+            remoteHost: input.remoteHost ?? null,
+            remotePort: input.remotePort ?? null,
+            updatedAt: now(),
+          };
+          mockTunnels[serverId] = tunnels.map((item) => (item.id === tunnelId ? tunnel : item));
+          return structuredClone(tunnel) as T;
+        }
+      }
+      throw new Error("Tunnel not found");
+    }
+    case "delete_tunnel": {
+      const tunnelId = args?.id as string;
+      for (const [serverId, tunnels] of Object.entries(mockTunnels)) {
+        const next = tunnels.filter((tunnel) => tunnel.id !== tunnelId);
+        if (next.length !== tunnels.length) {
+          mockTunnels[serverId] = next;
+          return undefined as T;
+        }
+      }
+      throw new Error("Tunnel not found");
+    }
+    case "get_tunnel_command": {
+      const server = mockState.servers.find((item) => item.id === args?.serverId);
+      const tunnel = (mockTunnels[args?.serverId as string] ?? []).find((item) => item.id === args?.tunnelId);
+      if (!server) {
+        throw new Error("Server not found");
+      }
+      if (!tunnel) {
+        throw new Error("Tunnel not found");
+      }
+      const key = server.identityFileId ? mockState.sshKeys.find((item) => item.id === server.identityFileId) : null;
+      const parts = [
+        "ssh",
+        "-N",
+        "-L",
+        `${tunnel.localBindHost ?? "127.0.0.1"}:${tunnel.localPort}:${tunnel.remoteHost}:${tunnel.remotePort}`,
+      ];
+      if (server.port !== 22) {
+        parts.push("-p", String(server.port));
+      }
+      if (key) {
+        parts.push("-i", key.path);
+      }
+      if (server.proxyJump) {
+        parts.push("-J", server.proxyJump);
+      }
+      parts.push(`${server.username ? `${server.username}@` : ""}${server.host}`);
+      return parts.join(" ") as T;
+    }
+    case "launch_tunnel": {
+      const server = mockState.servers.find((item) => item.id === args?.serverId);
+      const tunnel = (mockTunnels[args?.serverId as string] ?? []).find((item) => item.id === args?.tunnelId);
+      if (!server) {
+        throw new Error("Server not found");
+      }
+      if (!tunnel) {
+        throw new Error("Tunnel not found");
+      }
+      throw new Error("Tunnel launch requires the Tauri desktop app");
     }
     case "list_web_links": {
       const serverId = args?.serverId as string;
@@ -296,6 +401,12 @@ export const api = {
   saveSettings: (input: AppSettings) => call<AppSettings>("save_settings", { input }),
   getSshCommand: (serverId: string) => call<string>("get_ssh_command", { serverId }),
   launchSsh: (serverId: string) => call<void>("launch_ssh", { serverId }),
+  listTunnels: (serverId: string) => call<Tunnel[]>("list_tunnels", { serverId }),
+  saveTunnel: (serverId: string, id: string | null, input: TunnelInput) =>
+    id ? call<Tunnel>("update_tunnel", { id, input }) : call<Tunnel>("create_tunnel", { serverId, input }),
+  deleteTunnel: (id: string) => call<void>("delete_tunnel", { id }),
+  getTunnelCommand: (serverId: string, tunnelId: string) => call<string>("get_tunnel_command", { serverId, tunnelId }),
+  launchTunnel: (serverId: string, tunnelId: string) => call<void>("launch_tunnel", { serverId, tunnelId }),
   listWebLinks: (serverId: string) => call<WebLink[]>("list_web_links", { serverId }),
   saveWebLink: (serverId: string, id: string | null, input: WebLinkInput) =>
     id ? call<WebLink>("update_web_link", { id, input }) : call<WebLink>("create_web_link", { serverId, input }),

@@ -5,9 +5,13 @@ use crate::{
     db::Database,
     domain::{
         AppResult, AppSettings, AppStateSnapshot, Group, GroupInput, ImportCandidate, ImportResult,
-        ServerInput, ServerProfile, SshKeyInput, SshKeyRef, WebLink, WebLinkInput,
+        ServerInput, ServerProfile, SshKeyInput, SshKeyRef, Tunnel, TunnelInput, WebLink,
+        WebLinkInput,
     },
-    launcher::{build_ssh_argv, format_argv_for_display, launch_ssh_in_terminal},
+    launcher::{
+        build_ssh_argv, build_tunnel_argv, format_argv_for_display, launch_ssh_in_terminal,
+        launch_tunnel_in_terminal,
+    },
 };
 
 #[tauri::command]
@@ -100,6 +104,62 @@ pub fn launch_ssh(server_id: String, db: State<'_, Database>) -> AppResult<()> {
     let settings = db.get_settings()?;
 
     launch_ssh_in_terminal(&server, identity_file.as_deref(), &settings)
+}
+
+#[tauri::command]
+pub fn list_tunnels(server_id: String, db: State<'_, Database>) -> AppResult<Vec<Tunnel>> {
+    db.list_tunnels(&server_id)
+}
+
+#[tauri::command]
+pub fn create_tunnel(
+    server_id: String,
+    input: TunnelInput,
+    db: State<'_, Database>,
+) -> AppResult<Tunnel> {
+    db.create_tunnel(&server_id, input)
+}
+
+#[tauri::command]
+pub fn update_tunnel(id: String, input: TunnelInput, db: State<'_, Database>) -> AppResult<Tunnel> {
+    db.update_tunnel(&id, input)
+}
+
+#[tauri::command]
+pub fn delete_tunnel(id: String, db: State<'_, Database>) -> AppResult<()> {
+    db.delete_tunnel(&id)
+}
+
+#[tauri::command]
+pub fn get_tunnel_command(
+    server_id: String,
+    tunnel_id: String,
+    db: State<'_, Database>,
+) -> AppResult<String> {
+    let server = db
+        .get_server(&server_id)?
+        .ok_or_else(|| "Server not found".to_string())?;
+    let tunnel = db.get_tunnel_for_server(&server_id, &tunnel_id)?;
+    let identity_file = identity_file_path(&db, &server)?;
+
+    let argv = build_tunnel_argv(&server, identity_file.as_deref(), &tunnel)?;
+    Ok(format_argv_for_display(&argv))
+}
+
+#[tauri::command]
+pub fn launch_tunnel(
+    server_id: String,
+    tunnel_id: String,
+    db: State<'_, Database>,
+) -> AppResult<()> {
+    let server = db
+        .get_server(&server_id)?
+        .ok_or_else(|| "Server not found".to_string())?;
+    let tunnel = db.get_tunnel_for_server(&server_id, &tunnel_id)?;
+    let identity_file = identity_file_path(&db, &server)?;
+    let settings = db.get_settings()?;
+
+    launch_tunnel_in_terminal(&server, identity_file.as_deref(), &tunnel, &settings)
 }
 
 #[tauri::command]

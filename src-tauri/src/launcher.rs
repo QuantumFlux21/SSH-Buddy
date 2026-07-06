@@ -7,8 +7,8 @@ use std::{
 };
 
 use crate::domain::{
-    validate_proxy_jump, AppResult, AppSettings, ServerProfile, SUPPORTED_TERMINAL_PREFERENCES,
-    TERMINAL_PREFERENCE_AUTO,
+    normalize_tunnel_bind_host, validate_proxy_jump, validate_tunnel_input, AppResult, AppSettings,
+    ServerProfile, Tunnel, TunnelInput, SUPPORTED_TERMINAL_PREFERENCES, TERMINAL_PREFERENCE_AUTO,
 };
 
 const TERMINAL_ORDER: &[&str] = &[
@@ -39,6 +39,44 @@ pub fn build_ssh_argv(
     }
 
     let mut argv = vec!["ssh".to_string()];
+    append_profile_ssh_options(&mut argv, server, identity_file)?;
+
+    argv.push(destination_for(server));
+
+    Ok(argv)
+}
+
+pub fn build_tunnel_argv(
+    server: &ServerProfile,
+    identity_file: Option<&str>,
+    tunnel: &Tunnel,
+) -> AppResult<Vec<String>> {
+    if server.host.trim().is_empty() {
+        return Err("Server profile is missing a host".to_string());
+    }
+
+    if server.port == 0 {
+        return Err("Server profile port must be between 1 and 65535".to_string());
+    }
+
+    let tunnel_spec = local_tunnel_spec(tunnel)?;
+    let mut argv = vec![
+        "ssh".to_string(),
+        "-N".to_string(),
+        "-L".to_string(),
+        tunnel_spec,
+    ];
+    append_profile_ssh_options(&mut argv, server, identity_file)?;
+    argv.push(destination_for(server));
+
+    Ok(argv)
+}
+
+fn append_profile_ssh_options(
+    argv: &mut Vec<String>,
+    server: &ServerProfile,
+    identity_file: Option<&str>,
+) -> AppResult<()> {
     if server.port != 22 {
         argv.push("-p".to_string());
         argv.push(server.port.to_string());
@@ -55,14 +93,43 @@ pub fn build_ssh_argv(
         argv.push(proxy_jump);
     }
 
-    let destination = if server.username.trim().is_empty() {
+    Ok(())
+}
+
+fn destination_for(server: &ServerProfile) -> String {
+    if server.username.trim().is_empty() {
         server.host.trim().to_string()
     } else {
         format!("{}@{}", server.username.trim(), server.host.trim())
-    };
-    argv.push(destination);
+    }
+}
 
-    Ok(argv)
+fn local_tunnel_spec(tunnel: &Tunnel) -> AppResult<String> {
+    validate_tunnel_input(&TunnelInput {
+        label: tunnel.label.clone(),
+        tunnel_type: tunnel.tunnel_type.clone(),
+        local_bind_host: tunnel.local_bind_host.clone(),
+        local_port: tunnel.local_port.map(u32::from),
+        remote_host: tunnel.remote_host.clone(),
+        remote_port: tunnel.remote_port.map(u32::from),
+    })?;
+
+    let local_bind_host = normalize_tunnel_bind_host(tunnel.local_bind_host.clone());
+    let local_port = tunnel
+        .local_port
+        .ok_or_else(|| "Local port must be between 1 and 65535".to_string())?;
+    let remote_host = tunnel
+        .remote_host
+        .as_deref()
+        .ok_or_else(|| "Remote host is required".to_string())?
+        .trim();
+    let remote_port = tunnel
+        .remote_port
+        .ok_or_else(|| "Remote port must be between 1 and 65535".to_string())?;
+
+    Ok(format!(
+        "{local_bind_host}:{local_port}:{remote_host}:{remote_port}"
+    ))
 }
 
 pub fn format_argv_for_display(argv: &[String]) -> String {
@@ -138,6 +205,24 @@ pub fn launch_ssh_in_terminal(
     Ok(())
 }
 
+pub fn launch_tunnel_in_terminal(
+    server: &ServerProfile,
+    identity_file: Option<&str>,
+    tunnel: &Tunnel,
+    settings: &AppSettings,
+) -> AppResult<()> {
+    let command =
+        build_tunnel_launch_command(server, identity_file, tunnel, settings, command_in_path)?;
+    let terminal = command.program.clone();
+
+    Command::new(&command.program)
+        .args(&command.args)
+        .spawn()
+        .map_err(|error| format!("Failed to launch {}: {error}", terminal_label(&terminal)))?;
+
+    Ok(())
+}
+
 pub fn build_launch_command<F>(
     server: &ServerProfile,
     identity_file: Option<&str>,
@@ -156,6 +241,30 @@ where
 
     validate_identity_file_path(identity_file)?;
     let ssh_argv = build_ssh_argv(server, identity_file)?;
+    let terminal = select_terminal(&settings.terminal_preference, available)?;
+
+    terminal_command_for(&terminal, &ssh_argv)
+}
+
+pub fn build_tunnel_launch_command<F>(
+    server: &ServerProfile,
+    identity_file: Option<&str>,
+    tunnel: &Tunnel,
+    settings: &AppSettings,
+    available: F,
+) -> AppResult<ProcessCommand>
+where
+    F: Fn(&str) -> bool,
+{
+    if !available("ssh") {
+        return Err(
+            "OpenSSH client 'ssh' was not found in PATH. Install OpenSSH and try again."
+                .to_string(),
+        );
+    }
+
+    validate_identity_file_path(identity_file)?;
+    let ssh_argv = build_tunnel_argv(server, identity_file, tunnel)?;
     let terminal = select_terminal(&settings.terminal_preference, available)?;
 
     terminal_command_for(&terminal, &ssh_argv)
@@ -293,6 +402,21 @@ mod tests {
         }
     }
 
+    fn sample_tunnel() -> Tunnel {
+        Tunnel {
+            id: "tun".to_string(),
+            server_profile_id: "srv".to_string(),
+            label: "Postgres".to_string(),
+            tunnel_type: "local".to_string(),
+            local_bind_host: Some("127.0.0.1".to_string()),
+            local_port: Some(15432),
+            remote_host: Some("db.internal".to_string()),
+            remote_port: Some(5432),
+            created_at: "2026-01-01T00:00:00.000Z".to_string(),
+            updated_at: "2026-01-01T00:00:00.000Z".to_string(),
+        }
+    }
+
     #[test]
     fn builds_ssh_argv_with_profile_fields() {
         let argv = build_ssh_argv(&sample_server(), Some("/home/user/.ssh/id_ed25519")).unwrap();
@@ -338,6 +462,39 @@ mod tests {
                 "user@bastion:22,jump2",
                 "admin@nas.local"
             ]
+        );
+    }
+
+    #[test]
+    fn builds_tunnel_argv_with_local_forward() {
+        let argv = build_tunnel_argv(&sample_server(), None, &sample_tunnel()).unwrap();
+
+        assert_eq!(
+            argv,
+            vec![
+                "ssh",
+                "-N",
+                "-L",
+                "127.0.0.1:15432:db.internal:5432",
+                "-p",
+                "2222",
+                "admin@nas.local"
+            ]
+        );
+    }
+
+    #[test]
+    fn formats_tunnel_command_with_identity_file_and_proxy_jump() {
+        let mut server = sample_server();
+        server.proxy_jump = Some("user@bastion:22".to_string());
+
+        let command = format_argv_for_display(
+            &build_tunnel_argv(&server, Some("/home/alex/.ssh/lab key"), &sample_tunnel()).unwrap(),
+        );
+
+        assert_eq!(
+            command,
+            "ssh -N -L 127.0.0.1:15432:db.internal:5432 -p 2222 -i '/home/alex/.ssh/lab key' -J user@bastion:22 admin@nas.local"
         );
     }
 

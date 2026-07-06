@@ -17,6 +17,8 @@ pub const SUPPORTED_TERMINAL_PREFERENCES: &[&str] = &[
     "gnome-terminal",
     "xterm",
 ];
+pub const TUNNEL_TYPE_LOCAL: &str = "local";
+pub const DEFAULT_LOCAL_BIND_HOST: &str = "127.0.0.1";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -56,6 +58,21 @@ pub struct WebLink {
     pub server_profile_id: String,
     pub label: String,
     pub url: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct Tunnel {
+    pub id: String,
+    pub server_profile_id: String,
+    pub label: String,
+    pub tunnel_type: String,
+    pub local_bind_host: Option<String>,
+    pub local_port: Option<u16>,
+    pub remote_host: Option<String>,
+    pub remote_port: Option<u16>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -131,6 +148,17 @@ pub struct SshKeyInput {
 pub struct WebLinkInput {
     pub label: String,
     pub url: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TunnelInput {
+    pub label: String,
+    pub tunnel_type: String,
+    pub local_bind_host: Option<String>,
+    pub local_port: Option<u32>,
+    pub remote_host: Option<String>,
+    pub remote_port: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -386,6 +414,73 @@ pub fn validate_web_link_url(value: &str) -> AppResult<()> {
     Ok(())
 }
 
+pub fn validate_tunnel_input(input: &TunnelInput) -> AppResult<()> {
+    if normalize_text(&input.label).is_none() {
+        return Err("Tunnel label is required".to_string());
+    }
+
+    if input.tunnel_type.trim() != TUNNEL_TYPE_LOCAL {
+        return Err("Only local SSH tunnels are supported right now".to_string());
+    }
+
+    if let Some(local_bind_host) = &input.local_bind_host {
+        let trimmed = local_bind_host.trim();
+        if !trimmed.is_empty() {
+            validate_tunnel_host(trimmed, "Local bind host")?;
+        }
+    }
+
+    validate_tunnel_port(input.local_port, "Local port")?;
+
+    let remote_host = input.remote_host.as_deref().unwrap_or_default().trim();
+    if remote_host.is_empty() {
+        return Err("Remote host is required".to_string());
+    }
+    validate_tunnel_host(remote_host, "Remote host")?;
+
+    validate_tunnel_port(input.remote_port, "Remote port")?;
+
+    Ok(())
+}
+
+pub fn normalize_tunnel_bind_host(value: Option<String>) -> String {
+    value
+        .and_then(|item| normalize_text(&item))
+        .unwrap_or_else(|| DEFAULT_LOCAL_BIND_HOST.to_string())
+}
+
+fn validate_tunnel_port(value: Option<u32>, label: &str) -> AppResult<()> {
+    match value {
+        Some(port) if (1..=65_535).contains(&port) => Ok(()),
+        _ => Err(format!("{label} must be between 1 and 65535")),
+    }
+}
+
+fn validate_tunnel_host(value: &str, label: &str) -> AppResult<()> {
+    if value.chars().any(char::is_whitespace) {
+        return Err(format!("{label} must not contain whitespace"));
+    }
+
+    if value.starts_with('-') {
+        return Err(format!("{label} must not start with '-'"));
+    }
+
+    if value
+        .chars()
+        .any(|character| !is_tunnel_host_character_allowed(character))
+    {
+        return Err(format!(
+            "{label} contains unsupported characters. Use a hostname or IP address."
+        ));
+    }
+
+    Ok(())
+}
+
+fn is_tunnel_host_character_allowed(character: char) -> bool {
+    character.is_ascii_alphanumeric() || "._-".contains(character)
+}
+
 pub fn validate_app_settings(input: &AppSettings) -> AppResult<()> {
     if !SUPPORTED_TERMINAL_PREFERENCES.contains(&input.terminal_preference.as_str()) {
         return Err("Unsupported terminal preference".to_string());
@@ -472,6 +567,69 @@ mod tests {
             input.proxy_jump = Some(proxy_jump.to_string());
             assert_eq!(validate_server_input(&input).unwrap_err(), message);
         }
+    }
+
+    fn valid_tunnel_input() -> TunnelInput {
+        TunnelInput {
+            label: "Postgres".to_string(),
+            tunnel_type: TUNNEL_TYPE_LOCAL.to_string(),
+            local_bind_host: Some("127.0.0.1".to_string()),
+            local_port: Some(15432),
+            remote_host: Some("db.internal".to_string()),
+            remote_port: Some(5432),
+        }
+    }
+
+    #[test]
+    fn validates_tunnel_input() {
+        assert!(validate_tunnel_input(&valid_tunnel_input()).is_ok());
+
+        let mut input = valid_tunnel_input();
+        input.local_bind_host = None;
+        assert!(validate_tunnel_input(&input).is_ok());
+        assert_eq!(normalize_tunnel_bind_host(None), DEFAULT_LOCAL_BIND_HOST);
+
+        let mut input = valid_tunnel_input();
+        input.label = " ".to_string();
+        assert_eq!(
+            validate_tunnel_input(&input).unwrap_err(),
+            "Tunnel label is required"
+        );
+
+        let mut input = valid_tunnel_input();
+        input.tunnel_type = "remote".to_string();
+        assert_eq!(
+            validate_tunnel_input(&input).unwrap_err(),
+            "Only local SSH tunnels are supported right now"
+        );
+
+        let mut input = valid_tunnel_input();
+        input.local_port = Some(0);
+        assert_eq!(
+            validate_tunnel_input(&input).unwrap_err(),
+            "Local port must be between 1 and 65535"
+        );
+
+        let mut input = valid_tunnel_input();
+        input.remote_port = Some(65_536);
+        assert_eq!(
+            validate_tunnel_input(&input).unwrap_err(),
+            "Remote port must be between 1 and 65535"
+        );
+
+        let mut input = valid_tunnel_input();
+        input.remote_host = Some("db internal".to_string());
+        assert_eq!(
+            validate_tunnel_input(&input).unwrap_err(),
+            "Remote host must not contain whitespace"
+        );
+
+        let mut input = valid_tunnel_input();
+        input.remote_host = Some("db;touch".to_string());
+        assert_eq!(
+            validate_tunnel_input(&input).unwrap_err(),
+            "Remote host contains unsupported characters. Use a hostname or IP address."
+        );
     }
 
     #[test]

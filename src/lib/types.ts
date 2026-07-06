@@ -32,6 +32,19 @@ export interface WebLink {
   updatedAt: string;
 }
 
+export interface Tunnel {
+  id: string;
+  serverProfileId: string;
+  label: string;
+  tunnelType: string;
+  localBindHost: string | null;
+  localPort: number | null;
+  remoteHost: string | null;
+  remotePort: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ServerProfile {
   id: string;
   displayName: string;
@@ -89,6 +102,15 @@ export interface SshKeyInput {
 export interface WebLinkInput {
   label: string;
   url: string;
+}
+
+export interface TunnelInput {
+  label: string;
+  tunnelType: string;
+  localBindHost?: string | null;
+  localPort?: number | null;
+  remoteHost?: string | null;
+  remotePort?: number | null;
 }
 
 export interface ImportCandidate {

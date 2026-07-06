@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  Cable,
   Copy,
   Download,
   ExternalLink,
@@ -31,6 +32,14 @@ import {
   type ServerFormModel,
 } from "./lib/serverForm";
 import {
+  hasTunnelFormErrors,
+  newTunnelDraft,
+  toTunnelInput,
+  tunnelSummary,
+  validateTunnelForm,
+  type TunnelFormModel,
+} from "./lib/tunnels";
+import {
   hasWebLinkFormErrors,
   newWebLinkDraft,
   toWebLinkInput,
@@ -47,6 +56,7 @@ import type {
   ServerProfile,
   SshKeyInput,
   SshKeyRef,
+  Tunnel,
   WebLink,
 } from "./lib/types";
 
@@ -62,6 +72,9 @@ export default function App() {
   const [webLinks, setWebLinks] = useState<WebLink[]>([]);
   const [webLinksLoading, setWebLinksLoading] = useState(false);
   const [editingWebLink, setEditingWebLink] = useState<WebLinkFormModel | null>(null);
+  const [tunnels, setTunnels] = useState<Tunnel[]>([]);
+  const [tunnelsLoading, setTunnelsLoading] = useState(false);
+  const [editingTunnel, setEditingTunnel] = useState<TunnelFormModel | null>(null);
   const [serverPendingDelete, setServerPendingDelete] = useState<ServerProfile | null>(null);
   const [showImport, setShowImport] = useState(false);
   const [busyMessage, setBusyMessage] = useState<string | null>(null);
@@ -118,17 +131,23 @@ export default function App() {
       setWebLinks([]);
       setEditingWebLink(null);
       setWebLinksLoading(false);
+      setTunnels([]);
+      setEditingTunnel(null);
+      setTunnelsLoading(false);
       return;
     }
 
     let cancelled = false;
     setWebLinksLoading(true);
+    setTunnelsLoading(true);
     setEditingWebLink(null);
-    api
-      .listWebLinks(selectedServer.id)
-      .then((links) => {
+    setEditingTunnel(null);
+
+    Promise.all([api.listWebLinks(selectedServer.id), api.listTunnels(selectedServer.id)])
+      .then(([links, nextTunnels]) => {
         if (!cancelled) {
           setWebLinks(links);
+          setTunnels(nextTunnels);
         }
       })
       .catch((cause: unknown) => {
@@ -139,6 +158,7 @@ export default function App() {
       .finally(() => {
         if (!cancelled) {
           setWebLinksLoading(false);
+          setTunnelsLoading(false);
         }
       });
 
@@ -237,6 +257,11 @@ export default function App() {
     setWebLinks(links);
   }
 
+  async function refreshTunnels(serverId: string) {
+    const nextTunnels = await api.listTunnels(serverId);
+    setTunnels(nextTunnels);
+  }
+
   async function saveWebLink(server: ServerProfile, form: WebLinkFormModel) {
     const errors = validateWebLinkForm(form);
     if (hasWebLinkFormErrors(errors)) {
@@ -274,6 +299,57 @@ export default function App() {
         await api.openWebLink(server.id, link.id);
       },
       "Web link opened in your browser.",
+    );
+  }
+
+  async function saveTunnel(server: ServerProfile, form: TunnelFormModel) {
+    const errors = validateTunnelForm(form);
+    if (hasTunnelFormErrors(errors)) {
+      setStatusMessage(null);
+      setError(Object.values(errors).find(Boolean) ?? "Fix the highlighted tunnel fields.");
+      return;
+    }
+
+    await runAction(
+      "Saving tunnel",
+      async () => {
+        await api.saveTunnel(server.id, form.id ?? null, toTunnelInput(form));
+        setEditingTunnel(null);
+        await refreshTunnels(server.id);
+      },
+      form.id ? "Tunnel updated." : "Tunnel added.",
+    );
+  }
+
+  async function deleteTunnel(server: ServerProfile, tunnel: Tunnel) {
+    await runAction(
+      "Deleting tunnel",
+      async () => {
+        await api.deleteTunnel(tunnel.id);
+        await refreshTunnels(server.id);
+      },
+      "Tunnel deleted.",
+    );
+  }
+
+  async function copyTunnelCommand(server: ServerProfile, tunnel: Tunnel) {
+    await runAction(
+      "Copying tunnel command",
+      async () => {
+        const command = await api.getTunnelCommand(server.id, tunnel.id);
+        await navigator.clipboard.writeText(command);
+      },
+      "Tunnel command copied to clipboard.",
+    );
+  }
+
+  async function launchTunnel(server: ServerProfile, tunnel: Tunnel) {
+    await runAction(
+      "Launching tunnel",
+      async () => {
+        await api.launchTunnel(server.id, tunnel.id);
+      },
+      "Tunnel launch requested in your external terminal.",
     );
   }
 
@@ -414,6 +490,16 @@ export default function App() {
             onSaveWebLink={saveWebLink}
             onDeleteWebLink={deleteWebLink}
             onOpenWebLink={openWebLink}
+            tunnels={tunnels}
+            tunnelsLoading={tunnelsLoading}
+            editingTunnel={editingTunnel}
+            onAddTunnel={() => setEditingTunnel(newTunnelDraft())}
+            onEditTunnel={(tunnel) => setEditingTunnel(newTunnelDraft(tunnel))}
+            onCancelTunnel={() => setEditingTunnel(null)}
+            onSaveTunnel={saveTunnel}
+            onDeleteTunnel={deleteTunnel}
+            onCopyTunnelCommand={copyTunnelCommand}
+            onLaunchTunnel={launchTunnel}
             keyRefs={snapshot.sshKeys}
             hasAnyServers={hasAnyServers}
             hasActiveServerFilter={hasActiveServerFilter}
@@ -584,6 +670,16 @@ function ServerDetails({
   onSaveWebLink,
   onDeleteWebLink,
   onOpenWebLink,
+  tunnels,
+  tunnelsLoading,
+  editingTunnel,
+  onAddTunnel,
+  onEditTunnel,
+  onCancelTunnel,
+  onSaveTunnel,
+  onDeleteTunnel,
+  onCopyTunnelCommand,
+  onLaunchTunnel,
   hasAnyServers,
   hasActiveServerFilter,
   onAddServer,
@@ -608,6 +704,16 @@ function ServerDetails({
   onSaveWebLink: (server: ServerProfile, form: WebLinkFormModel) => void;
   onDeleteWebLink: (server: ServerProfile, link: WebLink) => void;
   onOpenWebLink: (server: ServerProfile, link: WebLink) => void;
+  tunnels: Tunnel[];
+  tunnelsLoading: boolean;
+  editingTunnel: TunnelFormModel | null;
+  onAddTunnel: () => void;
+  onEditTunnel: (tunnel: Tunnel) => void;
+  onCancelTunnel: () => void;
+  onSaveTunnel: (server: ServerProfile, form: TunnelFormModel) => void;
+  onDeleteTunnel: (server: ServerProfile, tunnel: Tunnel) => void;
+  onCopyTunnelCommand: (server: ServerProfile, tunnel: Tunnel) => void;
+  onLaunchTunnel: (server: ServerProfile, tunnel: Tunnel) => void;
   hasAnyServers: boolean;
   hasActiveServerFilter: boolean;
   onAddServer: () => void;
@@ -702,6 +808,21 @@ function ServerDetails({
           <p className="field-hint">Notes are plaintext local metadata. Do not store passwords, private keys, tokens, or sudo details here.</p>
         </section>
 
+        <TunnelsPanel
+          server={server}
+          tunnels={tunnels}
+          loading={tunnelsLoading}
+          editingTunnel={editingTunnel}
+          busy={busy}
+          onAdd={onAddTunnel}
+          onEdit={onEditTunnel}
+          onCancel={onCancelTunnel}
+          onSave={onSaveTunnel}
+          onDelete={onDeleteTunnel}
+          onCopyCommand={onCopyTunnelCommand}
+          onLaunch={onLaunchTunnel}
+        />
+
         <WebLinksPanel
           server={server}
           links={webLinks}
@@ -743,7 +864,7 @@ function ServerDetails({
           </div>
           <div className="planned-list">
             <span>Embedded terminal</span>
-            <span>SFTP/RDP/tunnels</span>
+            <span>SFTP/RDP</span>
           </div>
           <p className="muted">These are intentionally disabled until their backend behavior is implemented.</p>
         </section>
@@ -758,6 +879,230 @@ function Info({ label, value }: { label: string; value: string }) {
       <span>{label}</span>
       <strong>{value}</strong>
     </div>
+  );
+}
+
+function TunnelsPanel({
+  server,
+  tunnels,
+  loading,
+  editingTunnel,
+  busy,
+  onAdd,
+  onEdit,
+  onCancel,
+  onSave,
+  onDelete,
+  onCopyCommand,
+  onLaunch,
+}: {
+  server: ServerProfile;
+  tunnels: Tunnel[];
+  loading: boolean;
+  editingTunnel: TunnelFormModel | null;
+  busy: boolean;
+  onAdd: () => void;
+  onEdit: (tunnel: Tunnel) => void;
+  onCancel: () => void;
+  onSave: (server: ServerProfile, form: TunnelFormModel) => void;
+  onDelete: (server: ServerProfile, tunnel: Tunnel) => void;
+  onCopyCommand: (server: ServerProfile, tunnel: Tunnel) => void;
+  onLaunch: (server: ServerProfile, tunnel: Tunnel) => void;
+}) {
+  return (
+    <section className="panel">
+      <div className="panel-heading">
+        <div>
+          <h3>SSH Tunnels</h3>
+          <span>Local forwarding</span>
+        </div>
+        <button className="button compact" type="button" disabled={busy || Boolean(editingTunnel)} onClick={onAdd}>
+          <Plus size={15} />
+          Add tunnel
+        </button>
+      </div>
+
+      <p className="field-hint">Tunnels use OpenSSH local forwarding and stay open while the external terminal session is running.</p>
+
+      {editingTunnel ? (
+        <TunnelForm form={editingTunnel} busy={busy} onCancel={onCancel} onSave={(form) => onSave(server, form)} />
+      ) : null}
+
+      {loading ? <p className="muted">Loading tunnels...</p> : null}
+
+      {!loading && tunnels.length === 0 && !editingTunnel ? (
+        <div className="empty-inline">
+          <Cable size={30} />
+          <strong>No SSH tunnels yet</strong>
+          <span>Add local forwards for databases, admin panels, or internal services reachable from this server.</span>
+        </div>
+      ) : null}
+
+      {tunnels.length > 0 ? (
+        <div className="web-link-list">
+          {tunnels.map((tunnel) => (
+            <div className="web-link-row" key={tunnel.id}>
+              <Cable size={18} />
+              <div>
+                <strong>{tunnel.label}</strong>
+                <span>{tunnelSummary(tunnel)}</span>
+              </div>
+              <div className="row-actions">
+                <button className="button compact" type="button" disabled={busy} onClick={() => onLaunch(server, tunnel)}>
+                  <Terminal size={15} />
+                  Launch
+                </button>
+                <button className="button compact" type="button" disabled={busy} onClick={() => onCopyCommand(server, tunnel)}>
+                  <Copy size={15} />
+                  Copy
+                </button>
+                <button className="icon-button" type="button" aria-label={`Edit ${tunnel.label}`} disabled={busy} onClick={() => onEdit(tunnel)}>
+                  <Pencil size={16} />
+                </button>
+                <button className="icon-button danger" type="button" aria-label={`Delete ${tunnel.label}`} disabled={busy} onClick={() => onDelete(server, tunnel)}>
+                  <Trash2 size={16} />
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function TunnelForm({
+  form,
+  busy,
+  onCancel,
+  onSave,
+}: {
+  form: TunnelFormModel;
+  busy: boolean;
+  onCancel: () => void;
+  onSave: (form: TunnelFormModel) => void;
+}) {
+  const [draft, setDraft] = useState(form);
+  const [submitted, setSubmitted] = useState(false);
+  const errors = validateTunnelForm(draft);
+
+  useEffect(() => {
+    setDraft(form);
+    setSubmitted(false);
+  }, [form]);
+
+  const update = <Key extends keyof TunnelFormModel>(key: Key, value: TunnelFormModel[Key]) => {
+    setDraft({ ...draft, [key]: value });
+  };
+
+  return (
+    <form
+      className="web-link-form"
+      noValidate
+      onSubmit={(event) => {
+        event.preventDefault();
+        setSubmitted(true);
+        if (hasTunnelFormErrors(errors)) {
+          return;
+        }
+        onSave(draft);
+      }}
+    >
+      <div className="form-grid">
+        <label className="span-2">
+          Label
+          <input
+            value={draft.label}
+            onChange={(event) => update("label", event.target.value)}
+            aria-invalid={submitted && Boolean(errors.label)}
+            aria-describedby={submitted && errors.label ? "tunnel-label-error" : undefined}
+          />
+          {submitted && errors.label ? (
+            <span className="field-error" id="tunnel-label-error">
+              {errors.label}
+            </span>
+          ) : null}
+        </label>
+        <label>
+          Local bind host
+          <input
+            value={draft.localBindHost}
+            onChange={(event) => update("localBindHost", event.target.value)}
+            placeholder="127.0.0.1"
+            aria-invalid={submitted && Boolean(errors.localBindHost)}
+            aria-describedby={submitted && errors.localBindHost ? "tunnel-local-host-error" : "tunnel-local-host-hint"}
+          />
+          {submitted && errors.localBindHost ? (
+            <span className="field-error" id="tunnel-local-host-error">
+              {errors.localBindHost}
+            </span>
+          ) : (
+            <span className="field-hint" id="tunnel-local-host-hint">
+              Defaults to 127.0.0.1 when empty.
+            </span>
+          )}
+        </label>
+        <label>
+          Local port
+          <input
+            type="number"
+            min={1}
+            max={65535}
+            value={draft.localPort}
+            onChange={(event) => update("localPort", event.target.value)}
+            placeholder="15432"
+            aria-invalid={submitted && Boolean(errors.localPort)}
+            aria-describedby={submitted && errors.localPort ? "tunnel-local-port-error" : undefined}
+          />
+          {submitted && errors.localPort ? (
+            <span className="field-error" id="tunnel-local-port-error">
+              {errors.localPort}
+            </span>
+          ) : null}
+        </label>
+        <label>
+          Remote host
+          <input
+            value={draft.remoteHost}
+            onChange={(event) => update("remoteHost", event.target.value)}
+            placeholder="db.internal"
+            aria-invalid={submitted && Boolean(errors.remoteHost)}
+            aria-describedby={submitted && errors.remoteHost ? "tunnel-remote-host-error" : undefined}
+          />
+          {submitted && errors.remoteHost ? (
+            <span className="field-error" id="tunnel-remote-host-error">
+              {errors.remoteHost}
+            </span>
+          ) : null}
+        </label>
+        <label>
+          Remote port
+          <input
+            type="number"
+            min={1}
+            max={65535}
+            value={draft.remotePort}
+            onChange={(event) => update("remotePort", event.target.value)}
+            placeholder="5432"
+            aria-invalid={submitted && Boolean(errors.remotePort)}
+            aria-describedby={submitted && errors.remotePort ? "tunnel-remote-port-error" : undefined}
+          />
+          {submitted && errors.remotePort ? (
+            <span className="field-error" id="tunnel-remote-port-error">
+              {errors.remotePort}
+            </span>
+          ) : null}
+        </label>
+      </div>
+      <div className="modal-actions">
+        <button type="button" className="button ghost" disabled={busy} onClick={onCancel}>
+          Cancel
+        </button>
+        <button type="submit" className="button primary" disabled={busy}>
+          Save tunnel
+        </button>
+      </div>
+    </form>
   );
 }
 
