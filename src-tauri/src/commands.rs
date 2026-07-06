@@ -146,13 +146,16 @@ pub fn open_web_link(
 }
 
 #[tauri::command]
-pub fn import_ssh_config_preview() -> AppResult<Vec<ImportCandidate>> {
-    Err("SSH config import is not implemented yet".to_string())
+pub fn import_ssh_config_preview(db: State<'_, Database>) -> AppResult<Vec<ImportCandidate>> {
+    crate::ssh_config::import_preview(&db)
 }
 
 #[tauri::command]
-pub fn import_ssh_config(_aliases: Vec<String>) -> AppResult<ImportResult> {
-    Err("SSH config import is not implemented yet".to_string())
+pub fn import_ssh_config(
+    aliases: Vec<String>,
+    db: State<'_, Database>,
+) -> AppResult<ImportResult> {
+    crate::ssh_config::import_selected(&db, aliases)
 }
 
 fn identity_file_path(db: &Database, server: &ServerProfile) -> AppResult<Option<String>> {

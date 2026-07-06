@@ -4,6 +4,7 @@ mod commands;
 mod db;
 mod domain;
 mod launcher;
+mod ssh_config;
 
 use std::{fs, io};
 

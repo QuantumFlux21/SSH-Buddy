@@ -262,9 +262,13 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
       return undefined as T;
     }
     case "import_ssh_config_preview":
-      throw new Error("SSH config import is not implemented yet");
+      return [] as T;
     case "import_ssh_config":
-      throw new Error("SSH config import is not implemented yet");
+      return {
+        imported: 0,
+        skipped: (args?.aliases as string[] | undefined)?.length ?? 0,
+        servers: [],
+      } as T;
     default:
       throw new Error(`Unknown mock command: ${command}`);
   }

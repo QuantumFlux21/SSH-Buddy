@@ -96,8 +96,11 @@ export interface ImportCandidate {
   port: number;
   username: string;
   identityFile: string | null;
+  proxyJump: string | null;
   warnings: string[];
   selected: boolean;
+  duplicate: boolean;
+  skipped: boolean;
 }
 
 export interface ImportResult {

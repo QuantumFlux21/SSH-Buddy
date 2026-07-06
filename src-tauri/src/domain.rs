@@ -139,9 +139,12 @@ pub struct ImportCandidate {
     pub host: String,
     pub port: u16,
     pub username: String,
-    pub identity_file_id: Option<String>,
+    pub identity_file: Option<String>,
+    pub proxy_jump: Option<String>,
     pub warnings: Vec<String>,
     pub selected: bool,
+    pub duplicate: bool,
+    pub skipped: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]

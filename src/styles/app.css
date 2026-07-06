@@ -84,7 +84,8 @@ button {
 .info-cell span,
 .key-row span,
 .import-row span,
-.import-row small {
+.import-row small,
+.import-badge {
   color: var(--muted);
 }
 
@@ -867,13 +868,17 @@ input[type="color"] {
   padding: 13px;
 }
 
+.import-row.disabled {
+  opacity: 0.72;
+}
+
 .import-row input {
   width: 16px;
   height: 16px;
   margin-top: 3px;
 }
 
-.import-row div {
+.import-row > div {
   display: grid;
   gap: 3px;
   min-width: 0;
@@ -881,6 +886,39 @@ input[type="color"] {
 
 .import-row small {
   overflow-wrap: anywhere;
+}
+
+.import-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.import-badges {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.import-badge {
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  padding: 2px 7px;
+  background: rgba(255, 255, 255, 0.04);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.import-badge.warning {
+  border-color: rgba(255, 201, 92, 0.34);
+  color: var(--warning);
+  background: rgba(255, 201, 92, 0.1);
+}
+
+.import-warnings {
+  color: var(--warning) !important;
 }
 
 @media (max-width: 1100px) {

@@ -361,6 +361,68 @@ impl Database {
         Ok(key)
     }
 
+    pub fn find_or_create_ssh_key_ref_for_path(&self, path: &str) -> AppResult<SshKeyRef> {
+        let path = normalize_text(path).ok_or_else(|| "Key path is required".to_string())?;
+        let conn = self.lock()?;
+
+        if let Some(key) = conn
+            .query_row(
+                "
+                SELECT id, label, path, fingerprint, comment, created_at, updated_at
+                FROM ssh_key_refs
+                WHERE path = ?1
+                ",
+                params![path],
+                |row| {
+                    Ok(SshKeyRef {
+                        id: row.get(0)?,
+                        label: row.get(1)?,
+                        path: row.get(2)?,
+                        fingerprint: row.get(3)?,
+                        comment: row.get(4)?,
+                        created_at: row.get(5)?,
+                        updated_at: row.get(6)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(to_error)?
+        {
+            return Ok(key);
+        }
+
+        let id = new_id();
+        let now = now_timestamp();
+        let key = SshKeyRef {
+            id,
+            label: key_label_from_path(&path),
+            path,
+            fingerprint: None,
+            comment: Some("Imported from ~/.ssh/config".to_string()),
+            created_at: now.clone(),
+            updated_at: now,
+        };
+
+        conn.execute(
+            "
+            INSERT INTO ssh_key_refs (id, label, path, fingerprint, comment, created_at, updated_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            ",
+            params![
+                key.id,
+                key.label,
+                key.path,
+                key.fingerprint,
+                key.comment,
+                key.created_at,
+                key.updated_at
+            ],
+        )
+        .map_err(to_error)?;
+
+        Ok(key)
+    }
+
     pub fn delete_ssh_key_ref(&self, id: &str) -> AppResult<()> {
         let conn = self.lock()?;
         conn.execute("DELETE FROM ssh_key_refs WHERE id = ?1", params![id])
@@ -815,6 +877,16 @@ fn bool_to_i64(value: bool) -> i64 {
         1
     } else {
         0
+    }
+}
+
+fn key_label_from_path(path: &str) -> String {
+    let trimmed = path.trim_end_matches('/');
+    let label = trimmed.rsplit('/').next().unwrap_or(trimmed).trim();
+    if label.is_empty() {
+        path.to_string()
+    } else {
+        label.to_string()
     }
 }
 

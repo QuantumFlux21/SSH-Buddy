@@ -340,10 +340,9 @@ export default function App() {
             <h1>{sectionTitle(activeSection, selectedServer)}</h1>
           </div>
           <div className="topbar-actions">
-            <button className="button ghost planned-disabled" disabled title="SSH config import is coming later">
+            <button className="button ghost" disabled={isBusy} title="Preview ~/.ssh/config before importing" onClick={() => setShowImport(true)}>
               <Download size={17} />
               Import SSH config
-              <span className="planned-badge">Coming later</span>
             </button>
             <button className="button primary" disabled={isBusy} onClick={() => setEditingServer(newServerDraft())}>
               <Plus size={17} />
@@ -377,6 +376,7 @@ export default function App() {
             hasAnyServers={hasAnyServers}
             hasActiveServerFilter={hasActiveServerFilter}
             onAddServer={() => setEditingServer(newServerDraft())}
+            onImport={() => setShowImport(true)}
             onClearFilters={() => {
               setQuery("");
               setGroupFilter(null);
@@ -524,6 +524,7 @@ function ServerDetails({
   hasAnyServers,
   hasActiveServerFilter,
   onAddServer,
+  onImport,
   onClearFilters,
   busy,
 }: {
@@ -547,6 +548,7 @@ function ServerDetails({
   hasAnyServers: boolean;
   hasActiveServerFilter: boolean;
   onAddServer: () => void;
+  onImport: () => void;
   onClearFilters: () => void;
   busy: boolean;
 }) {
@@ -558,7 +560,7 @@ function ServerDetails({
         <p>
           {hasAnyServers
             ? "No saved profile matches the current search or group filter."
-            : "Create your first SSH profile. Imports and launch actions are coming later."}
+            : "Create your first SSH profile or import concrete aliases from your OpenSSH config."}
         </p>
         <div className="empty-actions">
           {hasActiveServerFilter ? (
@@ -570,6 +572,12 @@ function ServerDetails({
             <Plus size={17} />
             Add server
           </button>
+          {!hasAnyServers ? (
+            <button className="button ghost" type="button" disabled={busy} onClick={onImport}>
+              <Download size={17} />
+              Import SSH config
+            </button>
+          ) : null}
         </div>
       </section>
     );
@@ -671,7 +679,6 @@ function ServerDetails({
           </div>
           <div className="planned-list">
             <span>Embedded terminal</span>
-            <span>SSH config import</span>
             <span>SFTP/RDP/tunnels</span>
           </div>
           <p className="muted">These are intentionally disabled until their backend behavior is implemented.</p>
@@ -1284,7 +1291,7 @@ function ImportDialog({ onClose, onImported }: { onClose: () => void; onImported
       .importSshConfigPreview()
       .then((items) => {
         setCandidates(items);
-        setSelectedAliases(new Set(items.filter((item) => item.selected).map((item) => item.alias)));
+        setSelectedAliases(new Set(items.filter((item) => item.selected && !item.skipped && !item.duplicate).map((item) => item.alias)));
       })
       .catch((cause: unknown) => {
         setError(cause instanceof Error ? cause.message : String(cause));
@@ -1319,31 +1326,46 @@ function ImportDialog({ onClose, onImported }: { onClose: () => void; onImported
         {error ? <div className="status-banner danger">{error}</div> : null}
 
         <div className="import-list">
-          {candidates.map((candidate) => (
-            <label className="import-row" key={candidate.alias}>
-              <input
-                type="checkbox"
-                checked={selectedAliases.has(candidate.alias)}
-                onChange={(event) => {
-                  const next = new Set(selectedAliases);
-                  if (event.target.checked) {
-                    next.add(candidate.alias);
-                  } else {
-                    next.delete(candidate.alias);
-                  }
-                  setSelectedAliases(next);
-                }}
-              />
-              <div>
-                <strong>{candidate.name}</strong>
-                <span>
-                  {candidate.username ? `${candidate.username}@` : ""}
-                  {candidate.host}:{candidate.port}
-                </span>
-                {candidate.warnings.length ? <small>{candidate.warnings.join(" ")}</small> : null}
-              </div>
-            </label>
-          ))}
+          {candidates.map((candidate) => {
+            const selectable = !candidate.skipped && !candidate.duplicate;
+            return (
+              <label className={selectable ? "import-row" : "import-row disabled"} key={candidate.alias}>
+                <input
+                  type="checkbox"
+                  disabled={!selectable}
+                  checked={selectedAliases.has(candidate.alias)}
+                  onChange={(event) => {
+                    const next = new Set(selectedAliases);
+                    if (event.target.checked) {
+                      next.add(candidate.alias);
+                    } else {
+                      next.delete(candidate.alias);
+                    }
+                    setSelectedAliases(next);
+                  }}
+                />
+                <div>
+                  <div className="import-title-row">
+                    <strong>{candidate.name}</strong>
+                    <span className="import-badges">
+                      {candidate.skipped ? <span className="import-badge warning">Skipped</span> : null}
+                      {candidate.duplicate ? <span className="import-badge warning">Duplicate</span> : null}
+                      {candidate.proxyJump ? <span className="import-badge">ProxyJump</span> : null}
+                    </span>
+                  </div>
+                  <span>
+                    {candidate.username ? `${candidate.username}@` : ""}
+                    {candidate.host}:{candidate.port}
+                  </span>
+                  {candidate.identityFile ? <small>IdentityFile: {candidate.identityFile}</small> : null}
+                  {candidate.proxyJump ? <small>ProxyJump: {candidate.proxyJump}</small> : null}
+                  {candidate.warnings.length ? (
+                    <small className="import-warnings">{candidate.warnings.join(" ")}</small>
+                  ) : null}
+                </div>
+              </label>
+            );
+          })}
         </div>
 
         {!loading && candidates.length === 0 ? (
