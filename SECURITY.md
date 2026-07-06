@@ -37,6 +37,10 @@ SSH-Buddy must not automate sudo by storing or injecting sudo passwords. Normal 
 - Web/admin links must be `http://` or `https://` and must not contain embedded credentials.
 - Notes are plaintext local metadata and should not contain secrets.
 
+## Local Metadata Storage
+
+SSH-Buddy stores local app metadata in `ssh-buddy.sqlite3` under the Tauri app data directory for the app identifier `io.github.quantumflux21.ssh-buddy`. This database is not an encrypted secret store. Delete the app data directory to reset local profiles, groups, tags, key references, web links, notes, and settings.
+
 ## What SSH-Buddy Does Not Do
 
 - Does not store private key contents.

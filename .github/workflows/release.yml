@@ -60,7 +60,7 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "SSH-Buddy ${{ github.ref_name }}"
-          releaseBody: "First SSH-Buddy pre-release. See docs/releases/v0.1.0.md for features, known limitations, security model, and install notes. Builds are unsigned; Windows and macOS may show OS trust warnings."
+          releaseBody: "SSH-Buddy ${{ github.ref_name }} release artifacts. See CHANGELOG.md and docs/releases for features, known limitations, security model, and install notes. Builds are unsigned; Windows and macOS may show OS trust warnings."
           releaseDraft: true
           prerelease: true
           args: ${{ matrix.args }}

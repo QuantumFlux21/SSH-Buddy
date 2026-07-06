@@ -69,7 +69,7 @@ Status: in progress.
 
 ## Release Packaging
 
-Status: planned.
+Status: complete for v0.1.0; release hardening continues.
 
 - Use GitHub Actions to build platform-specific release artifacts.
 - Linux: AppImage first.
@@ -77,6 +77,16 @@ Status: planned.
 - macOS: `.dmg` for x64 and Apple Silicon.
 - Do not promise a single universal file across all operating systems.
 - One app, one codebase, multiple release files.
+
+## v0.1.1 Bugfix Candidates
+
+Status: post-release validation.
+
+- Keep the scope limited to bug fixes, documentation, and packaging corrections.
+- Validate GitHub release metadata, including whether releases should be marked as pre-releases.
+- Smoke-test the Linux AppImage on CachyOS/KDE Wayland.
+- Track local rolling-release AppImage packaging failures separately from CI release packaging.
+- Improve install, troubleshooting, and local data reset documentation as issues are discovered.
 
 ## Post-MVP
 
