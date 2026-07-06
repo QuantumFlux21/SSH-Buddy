@@ -29,7 +29,6 @@ const mockState: AppStateSnapshot = {
       id: "grp_lab",
       name: "Homelab",
       color: "#3aa675",
-      sortOrder: 0,
       createdAt: now(),
       updatedAt: now(),
     },
@@ -38,7 +37,6 @@ const mockState: AppStateSnapshot = {
     {
       id: "tag_linux",
       name: "linux",
-      color: "#4da3ff",
       createdAt: now(),
       updatedAt: now(),
     },
@@ -75,7 +73,8 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
   switch (command) {
     case "get_app_state":
       return structuredClone(mockState) as T;
-    case "save_server": {
+    case "create_server":
+    case "update_server": {
       const input = args?.input as ServerInput;
       const timestamp = now();
       const tags = input.tagNames
@@ -89,61 +88,30 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
           const tag: Tag = {
             id: id("tag"),
             name: tagName,
-            color: "#4da3ff",
             createdAt: timestamp,
             updatedAt: timestamp,
           };
           mockState.tags.push(tag);
           return tag;
         });
-      const serverId = input.id ?? id("srv");
+      const serverId = command === "update_server" ? (args?.id as string) : id("srv");
       const server: ServerProfile = {
         id: serverId,
-        name: input.name,
+        displayName: input.displayName,
         host: input.host,
         port: input.port,
         username: input.username,
-        identityFile: input.identityFile ?? null,
+        identityFileId: input.identityFileId ?? null,
         groupId: input.groupId ?? null,
-        notes: input.notes,
+        notes: input.notes ?? null,
+        favorite: input.favorite,
         tags,
-        webLinks: input.webLinks
-          .filter((link) => link.label.trim() || link.url.trim())
-          .map((link, index) => ({
-            id: link.id ?? id("web"),
-            serverId,
-            label: link.label.trim() || "Web admin",
-            url: link.url.trim(),
-            sortOrder: index,
-          })),
-        actions: [
-          {
-            id: id("act"),
-            serverId,
-            type: "ssh",
-            label: "Open SSH session",
-            enabled: true,
-            sortOrder: 0,
-            config: {},
-          },
-          {
-            id: id("act"),
-            serverId,
-            type: "copy-command",
-            label: "Copy SSH command",
-            enabled: true,
-            sortOrder: 1,
-            config: {},
-          },
-        ],
         createdAt: timestamp,
         updatedAt: timestamp,
-        lastConnectedAt: null,
       };
       const existingIndex = mockState.servers.findIndex((item) => item.id === server.id);
       if (existingIndex >= 0) {
         server.createdAt = mockState.servers[existingIndex].createdAt;
-        server.lastConnectedAt = mockState.servers[existingIndex].lastConnectedAt;
         mockState.servers[existingIndex] = server;
       } else {
         mockState.servers.push(server);
@@ -155,24 +123,17 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
       mockState.servers = mockState.servers.filter((server) => server.id !== serverId);
       return undefined as T;
     }
-    case "save_group": {
+    case "create_group": {
       const input = args?.input as GroupInput;
       const timestamp = now();
       const group: Group = {
-        id: input.id ?? id("grp"),
+        id: id("grp"),
         name: input.name,
-        color: input.color,
-        sortOrder: mockState.groups.length,
+        color: input.color ?? null,
         createdAt: timestamp,
         updatedAt: timestamp,
       };
-      const existingIndex = mockState.groups.findIndex((item) => item.id === group.id);
-      if (existingIndex >= 0) {
-        group.createdAt = mockState.groups[existingIndex].createdAt;
-        mockState.groups[existingIndex] = group;
-      } else {
-        mockState.groups.push(group);
-      }
+      mockState.groups.push(group);
       return structuredClone(group) as T;
     }
     case "delete_group": {
@@ -183,28 +144,22 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
       );
       return undefined as T;
     }
-    case "save_ssh_key": {
+    case "create_ssh_key_ref": {
       const input = args?.input as SshKeyInput;
       const timestamp = now();
       const key: SshKeyRef = {
-        id: input.id ?? id("key"),
+        id: id("key"),
         label: input.label,
         path: input.path,
-        fingerprint: null,
-        comment: null,
+        fingerprint: input.fingerprint ?? null,
+        comment: input.comment ?? null,
         createdAt: timestamp,
         updatedAt: timestamp,
       };
-      const existingIndex = mockState.sshKeys.findIndex((item) => item.id === key.id);
-      if (existingIndex >= 0) {
-        key.createdAt = mockState.sshKeys[existingIndex].createdAt;
-        mockState.sshKeys[existingIndex] = key;
-      } else {
-        mockState.sshKeys.push(key);
-      }
+      mockState.sshKeys.push(key);
       return structuredClone(key) as T;
     }
-    case "delete_ssh_key": {
+    case "delete_ssh_key_ref": {
       const keyId = args?.id as string;
       mockState.sshKeys = mockState.sshKeys.filter((key) => key.id !== keyId);
       return undefined as T;
@@ -218,24 +173,46 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
     }
     case "launch_ssh":
     case "open_web_link":
-      return undefined as T;
+      throw new Error("This feature is not implemented yet");
     case "import_ssh_config_preview":
-      return [] as T;
+      throw new Error("SSH config import is not implemented yet");
     case "import_ssh_config":
-      return { imported: 0, skipped: 0, servers: [] } as T;
+      throw new Error("SSH config import is not implemented yet");
     default:
       throw new Error(`Unknown mock command: ${command}`);
   }
 }
 
 export const api = {
-  getAppState: () => call<AppStateSnapshot>("get_app_state"),
-  saveServer: (input: ServerInput) => call<ServerProfile>("save_server", { input }),
+  getAppState: async () => {
+    if (!canUseTauri()) {
+      return mockCall<AppStateSnapshot>("get_app_state");
+    }
+
+    const [servers, groups, sshKeys] = await Promise.all([
+      call<ServerProfile[]>("list_servers"),
+      call<Group[]>("list_groups"),
+      call<SshKeyRef[]>("list_ssh_key_refs"),
+    ]);
+
+    return {
+      servers,
+      groups,
+      sshKeys,
+      tags: Array.from(new Map(servers.flatMap((server) => server.tags).map((tag) => [tag.id, tag])).values()),
+      settings: {
+        terminalPreference: "auto",
+        safetyWarningsEnabled: true,
+      },
+    };
+  },
+  saveServer: (id: string | null, input: ServerInput) =>
+    id ? call<ServerProfile>("update_server", { id, input }) : call<ServerProfile>("create_server", { input }),
   deleteServer: (id: string) => call<void>("delete_server", { id }),
-  saveGroup: (input: GroupInput) => call<Group>("save_group", { input }),
+  saveGroup: (input: GroupInput) => call<Group>("create_group", { input }),
   deleteGroup: (id: string) => call<void>("delete_group", { id }),
-  saveSshKey: (input: SshKeyInput) => call<SshKeyRef>("save_ssh_key", { input }),
-  deleteSshKey: (id: string) => call<void>("delete_ssh_key", { id }),
+  saveSshKey: (input: SshKeyInput) => call<SshKeyRef>("create_ssh_key_ref", { input }),
+  deleteSshKey: (id: string) => call<void>("delete_ssh_key_ref", { id }),
   saveSettings: (input: AppSettings) => call<AppSettings>("save_settings", { input }),
   getSshCommand: (serverId: string) => call<string>("get_ssh_command", { serverId }),
   launchSsh: (serverId: string) => call<void>("launch_ssh", { serverId }),

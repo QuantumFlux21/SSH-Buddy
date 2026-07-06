@@ -19,13 +19,12 @@ export function filterServers(
     }
 
     const searchable = [
-      server.name,
+      server.displayName,
       server.host,
       server.username,
-      server.notes,
+      server.notes ?? "",
       groupMap.get(server.groupId ?? "") ?? "",
       ...server.tags.map((tag) => tag.name),
-      ...server.webLinks.map((link) => `${link.label} ${link.url}`),
     ]
       .join(" ")
       .toLowerCase();

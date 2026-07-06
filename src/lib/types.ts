@@ -1,20 +1,7 @@
-export type ConnectionActionType =
-  | "ssh"
-  | "copy-command"
-  | "web"
-  | "sftp"
-  | "scp"
-  | "rdp"
-  | "vnc"
-  | "tunnel"
-  | "wake-on-lan"
-  | "custom-command";
-
 export interface Group {
   id: string;
   name: string;
-  color: string;
-  sortOrder: number;
+  color: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -22,7 +9,6 @@ export interface Group {
 export interface Tag {
   id: string;
   name: string;
-  color: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -37,39 +23,19 @@ export interface SshKeyRef {
   updatedAt: string;
 }
 
-export interface WebLink {
-  id: string;
-  serverId: string;
-  label: string;
-  url: string;
-  sortOrder: number;
-}
-
-export interface ConnectionAction {
-  id: string;
-  serverId: string;
-  type: ConnectionActionType;
-  label: string;
-  enabled: boolean;
-  sortOrder: number;
-  config: Record<string, unknown>;
-}
-
 export interface ServerProfile {
   id: string;
-  name: string;
+  displayName: string;
   host: string;
   port: number;
   username: string;
-  identityFile: string | null;
+  identityFileId: string | null;
   groupId: string | null;
-  notes: string;
+  notes: string | null;
+  favorite: boolean;
   tags: Tag[];
-  webLinks: WebLink[];
-  actions: ConnectionAction[];
   createdAt: string;
   updatedAt: string;
-  lastConnectedAt: string | null;
 }
 
 export interface AppSettings {
@@ -85,36 +51,28 @@ export interface AppStateSnapshot {
   settings: AppSettings;
 }
 
-export interface WebLinkInput {
-  id?: string | null;
-  label: string;
-  url: string;
-  sortOrder: number;
-}
-
 export interface ServerInput {
-  id?: string | null;
-  name: string;
+  displayName: string;
   host: string;
   port: number;
   username: string;
-  identityFile?: string | null;
+  identityFileId?: string | null;
   groupId?: string | null;
-  notes: string;
+  notes?: string | null;
+  favorite: boolean;
   tagNames: string[];
-  webLinks: WebLinkInput[];
 }
 
 export interface GroupInput {
-  id?: string | null;
   name: string;
-  color: string;
+  color?: string | null;
 }
 
 export interface SshKeyInput {
-  id?: string | null;
   label: string;
   path: string;
+  fingerprint?: string | null;
+  comment?: string | null;
 }
 
 export interface ImportCandidate {

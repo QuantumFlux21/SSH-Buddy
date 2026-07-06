@@ -30,65 +30,50 @@ import type {
   ServerProfile,
   SshKeyInput,
   SshKeyRef,
-  WebLinkInput,
 } from "./lib/types";
 
 type Section = "servers" | "groups" | "keys" | "settings";
 
 interface ServerFormModel {
   id?: string | null;
-  name: string;
+  displayName: string;
   host: string;
   port: number;
   username: string;
-  identityFile: string;
+  identityFileId: string;
   groupId: string;
+  favorite: boolean;
   notes: string;
   tagText: string;
-  webLinks: WebLinkInput[];
 }
-
-const defaultWebLink = (): WebLinkInput => ({
-  label: "",
-  url: "",
-  sortOrder: 0,
-});
 
 const newServerDraft = (server?: ServerProfile | null): ServerFormModel => ({
   id: server?.id ?? null,
-  name: server?.name ?? "",
+  displayName: server?.displayName ?? "",
   host: server?.host ?? "",
   port: server?.port ?? 22,
   username: server?.username ?? "",
-  identityFile: server?.identityFile ?? "",
+  identityFileId: server?.identityFileId ?? "",
   groupId: server?.groupId ?? "",
+  favorite: server?.favorite ?? false,
   notes: server?.notes ?? "",
   tagText: tagInputValue(server ?? null),
-  webLinks: server?.webLinks.length ? server.webLinks.map((link) => ({ ...link })) : [defaultWebLink()],
 });
 
 function toServerInput(form: ServerFormModel): ServerInput {
   return {
-    id: form.id ?? null,
-    name: form.name.trim(),
+    displayName: form.displayName.trim(),
     host: form.host.trim(),
     port: Number(form.port),
     username: form.username.trim(),
-    identityFile: form.identityFile.trim() || null,
+    identityFileId: form.identityFileId || null,
     groupId: form.groupId || null,
-    notes: form.notes,
+    notes: form.notes.trim() || null,
+    favorite: form.favorite,
     tagNames: form.tagText
       .split(",")
       .map((tag) => tag.trim())
       .filter(Boolean),
-    webLinks: form.webLinks
-      .map((link, index) => ({
-        ...link,
-        label: link.label.trim(),
-        url: link.url.trim(),
-        sortOrder: index,
-      }))
-      .filter((link) => link.label || link.url),
   };
 }
 
@@ -154,14 +139,14 @@ export default function App() {
 
   async function saveServer(form: ServerFormModel) {
     await runAction("Saving server", async () => {
-      const server = await api.saveServer(toServerInput(form));
+      const server = await api.saveServer(form.id ?? null, toServerInput(form));
       setEditingServer(null);
       await loadState(server.id);
     });
   }
 
   async function deleteServer(server: ServerProfile) {
-    const confirmed = window.confirm(`Delete ${server.name}? This removes local metadata only.`);
+    const confirmed = window.confirm(`Delete ${server.displayName}? This removes local metadata only.`);
     if (!confirmed) {
       return;
     }
@@ -183,12 +168,6 @@ export default function App() {
     await runAction("Launching terminal", async () => {
       await api.launchSsh(server.id);
       await loadState(server.id);
-    });
-  }
-
-  async function openWebLink(server: ServerProfile, linkId: string) {
-    await runAction("Opening web link", async () => {
-      await api.openWebLink(server.id, linkId);
     });
   }
 
@@ -244,7 +223,7 @@ export default function App() {
               className={groupFilter === group.id ? "filter-pill active" : "filter-pill"}
               onClick={() => setGroupFilter(group.id)}
             >
-              <span className="color-dot" style={{ backgroundColor: group.color }} />
+              <span className="color-dot" style={{ backgroundColor: group.color ?? "#3aa675" }} />
               {group.name}
             </button>
           ))}
@@ -264,7 +243,7 @@ export default function App() {
                 setSelectedServerId(server.id);
               }}
             >
-              <span className="server-row-name">{server.name}</span>
+              <span className="server-row-name">{server.displayName}</span>
               <span className="server-row-host">{serverDestination(server)}</span>
             </button>
           ))}
@@ -279,7 +258,7 @@ export default function App() {
             <h1>{sectionTitle(activeSection, selectedServer)}</h1>
           </div>
           <div className="topbar-actions">
-            <button className="button ghost" onClick={() => setShowImport(true)}>
+            <button className="button ghost" disabled title="SSH config import is not implemented yet">
               <Download size={17} />
               Import SSH config
             </button>
@@ -301,7 +280,7 @@ export default function App() {
             onDelete={deleteServer}
             onCopyCommand={copySshCommand}
             onLaunch={launchSsh}
-            onOpenWebLink={openWebLink}
+            keyRefs={snapshot.sshKeys}
           />
         ) : null}
 
@@ -380,7 +359,7 @@ export default function App() {
 
 function sectionTitle(section: Section, server: ServerProfile | null) {
   if (section === "servers") {
-    return server?.name ?? "Servers";
+    return server?.displayName ?? "Servers";
   }
 
   if (section === "groups") {
@@ -416,19 +395,19 @@ function NavButton({
 function ServerDetails({
   server,
   groups,
+  keyRefs,
   onEdit,
   onDelete,
   onCopyCommand,
   onLaunch,
-  onOpenWebLink,
 }: {
   server: ServerProfile | null;
   groups: Group[];
+  keyRefs: SshKeyRef[];
   onEdit: (server: ServerProfile) => void;
   onDelete: (server: ServerProfile) => void;
   onCopyCommand: (server: ServerProfile) => void;
   onLaunch: (server: ServerProfile) => void;
-  onOpenWebLink: (server: ServerProfile, linkId: string) => void;
 }) {
   if (!server) {
     return (
@@ -447,7 +426,7 @@ function ServerDetails({
           <div>
             <p className="eyebrow">SSH profile</p>
             <h2>{serverDestination(server)}</h2>
-            <p>{groupName(groups, server.groupId)} · Last connected {shortDate(server.lastConnectedAt)}</p>
+            <p>{groupName(groups, server.groupId)} · Updated {shortDate(server.updatedAt)}</p>
           </div>
           <div className="hero-actions">
             <button className="icon-button" aria-label="Edit server" title="Edit server" onClick={() => onEdit(server)}>
@@ -460,7 +439,7 @@ function ServerDetails({
         </div>
 
         <div className="action-strip">
-          <button className="button primary" onClick={() => onLaunch(server)}>
+          <button className="button primary" disabled title="SSH launching is not implemented yet" onClick={() => onLaunch(server)}>
             <Terminal size={17} />
             Open SSH
           </button>
@@ -468,19 +447,13 @@ function ServerDetails({
             <Copy size={17} />
             Copy command
           </button>
-          {server.webLinks.map((link) => (
-            <button className="button" key={link.id} onClick={() => onOpenWebLink(server, link.id)}>
-              <ExternalLink size={17} />
-              {link.label}
-            </button>
-          ))}
         </div>
 
         <div className="info-grid">
           <Info label="Host" value={server.host} />
           <Info label="Port" value={String(server.port)} />
           <Info label="Username" value={server.username || "Default OpenSSH user"} />
-          <Info label="Identity file" value={server.identityFile || "OpenSSH default"} />
+          <Info label="Identity file" value={keyLabel(keyRefs, server.identityFileId)} />
         </div>
 
         <section className="panel">
@@ -488,7 +461,7 @@ function ServerDetails({
             <h3>Notes</h3>
             <span>No secrets here</span>
           </div>
-          <p className={server.notes.trim() ? "notes" : "muted"}>{server.notes.trim() || "No notes saved for this server."}</p>
+          <p className={server.notes?.trim() ? "notes" : "muted"}>{server.notes?.trim() || "No notes saved for this server."}</p>
         </section>
       </section>
 
@@ -513,17 +486,10 @@ function ServerDetails({
 
         <section className="panel">
           <div className="panel-heading">
-            <h3>Actions</h3>
-            <span>{server.actions.length}</span>
+            <h3>Planned actions</h3>
+            <span>Later</span>
           </div>
-          <div className="action-list">
-            {server.actions.map((action) => (
-              <div key={action.id} className="action-row">
-                <span>{action.label}</span>
-                <code>{action.type}</code>
-              </div>
-            ))}
-          </div>
+          <p className="muted">External SSH launch, web admin links, and SSH config import are not implemented in this milestone.</p>
         </section>
       </aside>
     </div>
@@ -537,6 +503,15 @@ function Info({ label, value }: { label: string; value: string }) {
       <strong>{value}</strong>
     </div>
   );
+}
+
+function keyLabel(keyRefs: SshKeyRef[], keyId: string | null) {
+  if (!keyId) {
+    return "OpenSSH default";
+  }
+
+  const key = keyRefs.find((item) => item.id === keyId);
+  return key ? `${key.label} (${key.path})` : "Missing key reference";
 }
 
 function ServerForm({
@@ -556,13 +531,6 @@ function ServerForm({
 }) {
   const update = <Key extends keyof ServerFormModel>(key: Key, value: ServerFormModel[Key]) => {
     onChange({ ...form, [key]: value });
-  };
-
-  const updateWebLink = (index: number, patch: Partial<WebLinkInput>) => {
-    onChange({
-      ...form,
-      webLinks: form.webLinks.map((link, itemIndex) => (itemIndex === index ? { ...link, ...patch } : link)),
-    });
   };
 
   return (
@@ -586,8 +554,8 @@ function ServerForm({
 
         <div className="form-grid">
           <label>
-            Name
-            <input value={form.name} onChange={(event) => update("name", event.target.value)} required />
+            Display name
+            <input value={form.displayName} onChange={(event) => update("displayName", event.target.value)} required />
           </label>
           <label>
             Hostname or IP
@@ -609,20 +577,15 @@ function ServerForm({
             <input value={form.username} onChange={(event) => update("username", event.target.value)} placeholder="OpenSSH default" />
           </label>
           <label>
-            Identity file
-            <input
-              value={form.identityFile}
-              onChange={(event) => update("identityFile", event.target.value)}
-              placeholder="~/.ssh/id_ed25519"
-              list="known-keys"
-            />
-            <datalist id="known-keys">
+            SSH key reference
+            <select value={form.identityFileId} onChange={(event) => update("identityFileId", event.target.value)}>
+              <option value="">OpenSSH default</option>
               {keyRefs.map((key) => (
-                <option key={key.id} value={key.path}>
+                <option key={key.id} value={key.id}>
                   {key.label}
                 </option>
               ))}
-            </datalist>
+            </select>
           </label>
           <label>
             Group
@@ -639,38 +602,15 @@ function ServerForm({
             Tags
             <input value={form.tagText} onChange={(event) => update("tagText", event.target.value)} placeholder="linux, prod, nas" />
           </label>
+          <label className="check-row span-2">
+            <input type="checkbox" checked={form.favorite} onChange={(event) => update("favorite", event.target.checked)} />
+            Favorite
+          </label>
           <label className="span-2">
             Notes
             <textarea value={form.notes} onChange={(event) => update("notes", event.target.value)} rows={5} />
+            <span className="field-hint">Notes are plaintext local metadata. Do not store secrets here.</span>
           </label>
-        </div>
-
-        <div className="subform">
-          <div className="panel-heading">
-            <h3>Web admin links</h3>
-            <button
-              type="button"
-              className="button compact"
-              onClick={() => onChange({ ...form, webLinks: [...form.webLinks, defaultWebLink()] })}
-            >
-              <Plus size={15} />
-              Add link
-            </button>
-          </div>
-          {form.webLinks.map((link, index) => (
-            <div className="web-link-row" key={index}>
-              <input value={link.label} onChange={(event) => updateWebLink(index, { label: event.target.value })} placeholder="Proxmox" />
-              <input value={link.url} onChange={(event) => updateWebLink(index, { url: event.target.value })} placeholder="https://host:8006" />
-              <button
-                type="button"
-                className="icon-button"
-                aria-label="Remove web link"
-                onClick={() => onChange({ ...form, webLinks: form.webLinks.filter((_, itemIndex) => itemIndex !== index) })}
-              >
-                <Trash2 size={16} />
-              </button>
-            </div>
-          ))}
         </div>
 
         <div className="modal-actions">
@@ -714,7 +654,7 @@ function GroupsPanel({
         </label>
         <label>
           Color
-          <input type="color" value={draft.color} onChange={(event) => setDraft({ ...draft, color: event.target.value })} />
+          <input type="color" value={draft.color ?? "#3aa675"} onChange={(event) => setDraft({ ...draft, color: event.target.value })} />
         </label>
         <button className="button primary" type="submit">
           <Plus size={17} />
@@ -725,7 +665,7 @@ function GroupsPanel({
       <div className="list-panel">
         {groups.map((group) => (
           <div className="list-row" key={group.id}>
-            <span className="color-dot" style={{ backgroundColor: group.color }} />
+            <span className="color-dot" style={{ backgroundColor: group.color ?? "#3aa675" }} />
             <strong>{group.name}</strong>
             <button className="icon-button danger" aria-label={`Delete ${group.name}`} onClick={() => onDelete(group)}>
               <Trash2 size={17} />

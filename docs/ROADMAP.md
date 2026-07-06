@@ -57,6 +57,17 @@ Status: planned.
 - Add safety warnings for root login, agent forwarding, password storage, and privileged command automation.
 - Expand tests around validation, command generation, and persistence.
 
+## Release Packaging
+
+Status: planned.
+
+- Use GitHub Actions to build platform-specific release artifacts.
+- Linux: AppImage first.
+- Windows: NSIS `.exe` installer.
+- macOS: `.dmg` for x64 and Apple Silicon.
+- Do not promise a single universal file across all operating systems.
+- One app, one codebase, multiple release files.
+
 ## Post-MVP
 
 - SFTP browser or external SFTP launch.
