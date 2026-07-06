@@ -8,16 +8,22 @@ mod launcher;
 use std::{fs, io};
 
 use commands::{
-    create_group, create_server, create_ssh_key_ref, delete_group, delete_server,
-    delete_ssh_key_ref, get_app_state, get_ssh_command, import_ssh_config,
-    import_ssh_config_preview, launch_ssh, list_groups, list_servers, list_ssh_key_refs,
-    open_web_link, save_settings, update_server,
+    create_group, create_server, create_ssh_key_ref, create_web_link, delete_group,
+    delete_server, delete_ssh_key_ref, delete_web_link, get_app_state, get_ssh_command,
+    import_ssh_config, import_ssh_config_preview, launch_ssh, list_groups, list_servers,
+    list_ssh_key_refs, list_web_links, open_web_link, save_settings, update_server,
+    update_web_link,
 };
 use db::Database;
 use tauri::Manager;
 
 fn main() {
     tauri::Builder::default()
+        .plugin(
+            tauri_plugin_opener::Builder::new()
+                .open_js_links_on_click(false)
+                .build(),
+        )
         .setup(|app| {
             let app_data_dir = app.path().app_data_dir()?;
             fs::create_dir_all(&app_data_dir)?;
@@ -42,6 +48,10 @@ fn main() {
             save_settings,
             get_ssh_command,
             launch_ssh,
+            list_web_links,
+            create_web_link,
+            update_web_link,
+            delete_web_link,
             open_web_link,
             import_ssh_config_preview,
             import_ssh_config

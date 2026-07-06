@@ -23,6 +23,15 @@ export interface SshKeyRef {
   updatedAt: string;
 }
 
+export interface WebLink {
+  id: string;
+  serverProfileId: string;
+  label: string;
+  url: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ServerProfile {
   id: string;
   displayName: string;
@@ -73,6 +82,11 @@ export interface SshKeyInput {
   path: string;
   fingerprint?: string | null;
   comment?: string | null;
+}
+
+export interface WebLinkInput {
+  label: string;
+  url: string;
 }
 
 export interface ImportCandidate {

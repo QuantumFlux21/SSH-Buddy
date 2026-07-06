@@ -517,6 +517,55 @@ button {
   padding-bottom: 9px;
 }
 
+.web-link-list {
+  display: grid;
+  gap: 10px;
+}
+
+.web-link-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: rgba(10, 15, 21, 0.52);
+  padding: 12px;
+}
+
+.web-link-row > svg {
+  color: var(--blue);
+}
+
+.web-link-row div:nth-child(2) {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.web-link-row span {
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.row-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.web-link-form {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 14px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: rgba(10, 15, 21, 0.52);
+  padding: 14px;
+}
+
 code {
   border: 1px solid var(--line);
   border-radius: 6px;
@@ -549,6 +598,30 @@ code {
 
 .empty-state.compact {
   min-height: 220px;
+}
+
+.empty-inline {
+  display: grid;
+  justify-items: center;
+  gap: 7px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  padding: 18px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.empty-inline svg {
+  color: var(--subtle);
+}
+
+.empty-inline strong {
+  color: var(--text);
+}
+
+.empty-inline span {
+  max-width: 420px;
+  font-size: 13px;
 }
 
 .empty-mini {

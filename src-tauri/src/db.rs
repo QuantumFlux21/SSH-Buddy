@@ -9,8 +9,9 @@ use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use crate::domain::{
     default_settings, new_id, normalize_notes, normalize_optional, normalize_tag_names,
     normalize_text, now_timestamp, validate_app_settings, validate_group_input,
-    validate_server_input, validate_ssh_key_input, AppResult, AppSettings, Group, GroupInput,
-    ServerInput, ServerProfile, SshKeyInput, SshKeyRef, Tag,
+    validate_server_input, validate_ssh_key_input, validate_web_link_input, AppResult,
+    AppSettings, Group, GroupInput, ServerInput, ServerProfile, SshKeyInput, SshKeyRef, Tag,
+    WebLink, WebLinkInput,
 };
 
 const MIGRATIONS: &[(&str, &str)] = &[
@@ -18,6 +19,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
     (
         "002_app_settings",
         include_str!("../migrations/002_app_settings.sql"),
+    ),
+    (
+        "003_server_web_links",
+        include_str!("../migrations/003_server_web_links.sql"),
     ),
 ];
 
@@ -453,6 +458,111 @@ impl Database {
         .map_err(to_error)
     }
 
+    pub fn list_web_links(&self, server_id: &str) -> AppResult<Vec<WebLink>> {
+        let conn = self.lock()?;
+        ensure_server_exists(&conn, server_id)?;
+        list_web_links_for_server(&conn, server_id)
+    }
+
+    pub fn create_web_link(
+        &self,
+        server_id: &str,
+        input: WebLinkInput,
+    ) -> AppResult<WebLink> {
+        validate_web_link_input(&input)?;
+
+        let conn = self.lock()?;
+        ensure_server_exists(&conn, server_id)?;
+        let id = new_id();
+        let now = now_timestamp();
+        let link = WebLink {
+            id,
+            server_profile_id: server_id.to_string(),
+            label: normalize_text(&input.label).unwrap(),
+            url: input.url.trim().to_string(),
+            created_at: now.clone(),
+            updated_at: now,
+        };
+
+        conn.execute(
+            "
+            INSERT INTO server_web_links (
+              id, server_profile_id, label, url, created_at, updated_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            ",
+            params![
+                link.id,
+                link.server_profile_id,
+                link.label,
+                link.url,
+                link.created_at,
+                link.updated_at
+            ],
+        )
+        .map_err(to_error)?;
+
+        Ok(link)
+    }
+
+    pub fn update_web_link(&self, id: &str, input: WebLinkInput) -> AppResult<WebLink> {
+        validate_web_link_input(&input)?;
+
+        let conn = self.lock()?;
+        let updated = conn
+            .execute(
+                "
+                UPDATE server_web_links
+                SET label = ?1,
+                    url = ?2,
+                    updated_at = ?3
+                WHERE id = ?4
+                ",
+                params![
+                    normalize_text(&input.label).unwrap(),
+                    input.url.trim(),
+                    now_timestamp(),
+                    id
+                ],
+            )
+            .map_err(to_error)?;
+
+        if updated == 0 {
+            return Err("Web link not found".to_string());
+        }
+
+        get_web_link_by_id(&conn, id)?.ok_or_else(|| "Updated web link was not found".to_string())
+    }
+
+    pub fn delete_web_link(&self, id: &str) -> AppResult<()> {
+        let conn = self.lock()?;
+        let deleted = conn
+            .execute("DELETE FROM server_web_links WHERE id = ?1", params![id])
+            .map_err(to_error)?;
+
+        if deleted == 0 {
+            return Err("Web link not found".to_string());
+        }
+
+        Ok(())
+    }
+
+    pub fn get_web_link_for_server(
+        &self,
+        server_id: &str,
+        link_id: &str,
+    ) -> AppResult<WebLink> {
+        let conn = self.lock()?;
+        ensure_server_exists(&conn, server_id)?;
+        let link = get_web_link_by_id(&conn, link_id)?
+            .ok_or_else(|| "Web link not found".to_string())?;
+
+        if link.server_profile_id != server_id {
+            return Err("Web link does not belong to this server".to_string());
+        }
+
+        Ok(link)
+    }
+
     #[cfg(test)]
     pub fn table_exists(&self, table_name: &str) -> AppResult<bool> {
         let conn = self.lock()?;
@@ -517,6 +627,14 @@ fn exists_by_id(conn: &Connection, table: &str, id: &str) -> AppResult<bool> {
     conn.query_row(&sql, params![id], |row| row.get::<_, i64>(0))
         .map(|value| value == 1)
         .map_err(to_error)
+}
+
+fn ensure_server_exists(conn: &Connection, server_id: &str) -> AppResult<()> {
+    if exists_by_id(conn, "server_profiles", server_id)? {
+        Ok(())
+    } else {
+        Err("Server not found".to_string())
+    }
 }
 
 fn sync_server_tags(tx: &Transaction<'_>, server_id: &str, tag_names: &[String]) -> AppResult<()> {
@@ -639,6 +757,49 @@ fn list_tags_for_server(conn: &Connection, server_id: &str) -> AppResult<Vec<Tag
     collect_rows(rows)
 }
 
+fn list_web_links_for_server(conn: &Connection, server_id: &str) -> AppResult<Vec<WebLink>> {
+    let mut stmt = conn
+        .prepare(
+            "
+            SELECT id, server_profile_id, label, url, created_at, updated_at
+            FROM server_web_links
+            WHERE server_profile_id = ?1
+            ORDER BY label COLLATE NOCASE ASC
+            ",
+        )
+        .map_err(to_error)?;
+    let rows = stmt
+        .query_map(params![server_id], web_link_from_row)
+        .map_err(to_error)?;
+
+    collect_rows(rows)
+}
+
+fn get_web_link_by_id(conn: &Connection, id: &str) -> AppResult<Option<WebLink>> {
+    conn.query_row(
+        "
+        SELECT id, server_profile_id, label, url, created_at, updated_at
+        FROM server_web_links
+        WHERE id = ?1
+        ",
+        params![id],
+        web_link_from_row,
+    )
+    .optional()
+    .map_err(to_error)
+}
+
+fn web_link_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<WebLink> {
+    Ok(WebLink {
+        id: row.get(0)?,
+        server_profile_id: row.get(1)?,
+        label: row.get(2)?,
+        url: row.get(3)?,
+        created_at: row.get(4)?,
+        updated_at: row.get(5)?,
+    })
+}
+
 fn collect_rows<T>(
     rows: rusqlite::MappedRows<'_, impl FnMut(&rusqlite::Row<'_>) -> rusqlite::Result<T>>,
 ) -> AppResult<Vec<T>> {
@@ -664,7 +825,7 @@ fn to_error(error: rusqlite::Error) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{AppSettings, GroupInput, ServerInput, SshKeyInput};
+    use crate::domain::{AppSettings, GroupInput, ServerInput, SshKeyInput, WebLinkInput};
 
     fn test_db() -> Database {
         let db = Database::open_in_memory().unwrap();
@@ -699,6 +860,7 @@ mod tests {
             "tags",
             "server_profile_tags",
             "app_settings",
+            "server_web_links",
         ] {
             assert!(db.table_exists(table).unwrap(), "{table} should exist");
         }
@@ -750,6 +912,123 @@ mod tests {
         assert_eq!(db.list_servers().unwrap().len(), 1);
         db.delete_server(&created.id).unwrap();
         assert!(db.list_servers().unwrap().is_empty());
+    }
+
+    #[test]
+    fn web_link_crud_round_trip() {
+        let db = test_db();
+        let server = db.create_server(server_input()).unwrap();
+
+        let created = db
+            .create_web_link(
+                &server.id,
+                WebLinkInput {
+                    label: "Proxmox".to_string(),
+                    url: "https://pve.local:8006".to_string(),
+                },
+            )
+            .unwrap();
+        assert_eq!(created.label, "Proxmox");
+        assert_eq!(created.server_profile_id, server.id);
+
+        let links = db.list_web_links(&server.id).unwrap();
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].url, "https://pve.local:8006");
+
+        let updated = db
+            .update_web_link(
+                &created.id,
+                WebLinkInput {
+                    label: "Router".to_string(),
+                    url: "http://router.local".to_string(),
+                },
+            )
+            .unwrap();
+        assert_eq!(updated.label, "Router");
+        assert_eq!(updated.url, "http://router.local");
+
+        db.delete_web_link(&created.id).unwrap();
+        assert!(db.list_web_links(&server.id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn rejects_invalid_web_link_urls() {
+        let db = test_db();
+        let server = db.create_server(server_input()).unwrap();
+
+        for url in [
+            "",
+            "not a url",
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "data:text/plain,hello",
+            "https://user:secret@example.com",
+            "https://",
+        ] {
+            let error = db
+                .create_web_link(
+                    &server.id,
+                    WebLinkInput {
+                        label: "Bad".to_string(),
+                        url: url.to_string(),
+                    },
+                )
+                .unwrap_err();
+            assert!(
+                error.contains("Web link URL") || error.contains("embedded credentials"),
+                "unexpected error for {url:?}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn deleting_server_cascades_web_links() {
+        let db = test_db();
+        let server = db.create_server(server_input()).unwrap();
+        let link = db
+            .create_web_link(
+                &server.id,
+                WebLinkInput {
+                    label: "Admin".to_string(),
+                    url: "https://admin.local".to_string(),
+                },
+            )
+            .unwrap();
+
+        db.delete_server(&server.id).unwrap();
+        let conn = db.lock().unwrap();
+        let count = conn
+            .query_row(
+                "SELECT COUNT(*) FROM server_web_links WHERE id = ?1",
+                params![link.id],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn web_link_lookup_rejects_server_mismatch() {
+        let db = test_db();
+        let first = db.create_server(server_input()).unwrap();
+        let mut second_input = server_input();
+        second_input.display_name = "Router".to_string();
+        second_input.host = "router.local".to_string();
+        let second = db.create_server(second_input).unwrap();
+        let link = db
+            .create_web_link(
+                &first.id,
+                WebLinkInput {
+                    label: "Admin".to_string(),
+                    url: "https://admin.local".to_string(),
+                },
+            )
+            .unwrap();
+
+        assert_eq!(
+            db.get_web_link_for_server(&second.id, &link.id).unwrap_err(),
+            "Web link does not belong to this server"
+        );
     }
 
     #[test]

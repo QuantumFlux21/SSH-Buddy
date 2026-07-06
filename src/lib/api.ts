@@ -11,6 +11,8 @@ import type {
   SshKeyInput,
   SshKeyRef,
   Tag,
+  WebLink,
+  WebLinkInput,
 } from "./types";
 
 const canUseTauri = () =>
@@ -58,6 +60,7 @@ const mockState: AppStateSnapshot = {
   },
   servers: [],
 };
+const mockWebLinks: Record<string, WebLink[]> = {};
 
 async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   if (canUseTauri()) {
@@ -121,6 +124,7 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
     case "delete_server": {
       const serverId = args?.id as string;
       mockState.servers = mockState.servers.filter((server) => server.id !== serverId);
+      delete mockWebLinks[serverId];
       return undefined as T;
     }
     case "create_group": {
@@ -190,8 +194,73 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
       }
       throw new Error("SSH launch requires the Tauri desktop app");
     }
-    case "open_web_link":
-      throw new Error("This feature is not implemented yet");
+    case "list_web_links": {
+      const serverId = args?.serverId as string;
+      if (!mockState.servers.some((server) => server.id === serverId)) {
+        throw new Error("Server not found");
+      }
+      return structuredClone(mockWebLinks[serverId] ?? []) as T;
+    }
+    case "create_web_link": {
+      const serverId = args?.serverId as string;
+      const input = args?.input as WebLinkInput;
+      if (!mockState.servers.some((server) => server.id === serverId)) {
+        throw new Error("Server not found");
+      }
+      const timestamp = now();
+      const link: WebLink = {
+        id: id("web"),
+        serverProfileId: serverId,
+        label: input.label,
+        url: input.url,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      };
+      mockWebLinks[serverId] = [...(mockWebLinks[serverId] ?? []), link];
+      return structuredClone(link) as T;
+    }
+    case "update_web_link": {
+      const linkId = args?.id as string;
+      const input = args?.input as WebLinkInput;
+      for (const [serverId, links] of Object.entries(mockWebLinks)) {
+        const index = links.findIndex((link) => link.id === linkId);
+        if (index >= 0) {
+          const link: WebLink = {
+            ...links[index],
+            label: input.label,
+            url: input.url,
+            updatedAt: now(),
+          };
+          mockWebLinks[serverId] = links.map((item) => (item.id === linkId ? link : item));
+          return structuredClone(link) as T;
+        }
+      }
+      throw new Error("Web link not found");
+    }
+    case "delete_web_link": {
+      const linkId = args?.id as string;
+      for (const [serverId, links] of Object.entries(mockWebLinks)) {
+        const next = links.filter((link) => link.id !== linkId);
+        if (next.length !== links.length) {
+          mockWebLinks[serverId] = next;
+          return undefined as T;
+        }
+      }
+      throw new Error("Web link not found");
+    }
+    case "open_web_link": {
+      const serverId = args?.serverId as string;
+      const linkId = args?.linkId as string;
+      const link = (mockWebLinks[serverId] ?? []).find((item) => item.id === linkId);
+      if (!link) {
+        throw new Error("Web link not found");
+      }
+      const opened = window.open(link.url, "_blank", "noopener,noreferrer");
+      if (!opened) {
+        throw new Error("Failed to open web link");
+      }
+      return undefined as T;
+    }
     case "import_ssh_config_preview":
       throw new Error("SSH config import is not implemented yet");
     case "import_ssh_config":
@@ -219,6 +288,10 @@ export const api = {
   saveSettings: (input: AppSettings) => call<AppSettings>("save_settings", { input }),
   getSshCommand: (serverId: string) => call<string>("get_ssh_command", { serverId }),
   launchSsh: (serverId: string) => call<void>("launch_ssh", { serverId }),
+  listWebLinks: (serverId: string) => call<WebLink[]>("list_web_links", { serverId }),
+  saveWebLink: (serverId: string, id: string | null, input: WebLinkInput) =>
+    id ? call<WebLink>("update_web_link", { id, input }) : call<WebLink>("create_web_link", { serverId, input }),
+  deleteWebLink: (id: string) => call<void>("delete_web_link", { id }),
   openWebLink: (serverId: string, linkId: string) => call<void>("open_web_link", { serverId, linkId }),
   importSshConfigPreview: () => call<ImportCandidate[]>("import_ssh_config_preview"),
   importSshConfig: (aliases: string[]) => call<ImportResult>("import_ssh_config", { aliases }),

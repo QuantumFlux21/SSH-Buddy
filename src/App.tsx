@@ -29,6 +29,13 @@ import {
   validateServerForm,
   type ServerFormModel,
 } from "./lib/serverForm";
+import {
+  hasWebLinkFormErrors,
+  newWebLinkDraft,
+  toWebLinkInput,
+  validateWebLinkForm,
+  type WebLinkFormModel,
+} from "./lib/webLinks";
 import type {
   AppSettings,
   AppStateSnapshot,
@@ -38,6 +45,7 @@ import type {
   ServerProfile,
   SshKeyInput,
   SshKeyRef,
+  WebLink,
 } from "./lib/types";
 
 type Section = "servers" | "groups" | "keys" | "settings";
@@ -49,6 +57,9 @@ export default function App() {
   const [groupFilter, setGroupFilter] = useState<string | null>(null);
   const [selectedServerId, setSelectedServerId] = useState<string | null>(null);
   const [editingServer, setEditingServer] = useState<ServerFormModel | null>(null);
+  const [webLinks, setWebLinks] = useState<WebLink[]>([]);
+  const [webLinksLoading, setWebLinksLoading] = useState(false);
+  const [editingWebLink, setEditingWebLink] = useState<WebLinkFormModel | null>(null);
   const [serverPendingDelete, setServerPendingDelete] = useState<ServerProfile | null>(null);
   const [showImport, setShowImport] = useState(false);
   const [busyMessage, setBusyMessage] = useState<string | null>(null);
@@ -98,6 +109,40 @@ export default function App() {
       setSelectedServerId(filteredServers[0].id);
     }
   }, [filteredServers, selectedServerId]);
+
+  useEffect(() => {
+    if (!selectedServer || activeSection !== "servers") {
+      setWebLinks([]);
+      setEditingWebLink(null);
+      setWebLinksLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setWebLinksLoading(true);
+    setEditingWebLink(null);
+    api
+      .listWebLinks(selectedServer.id)
+      .then((links) => {
+        if (!cancelled) {
+          setWebLinks(links);
+        }
+      })
+      .catch((cause: unknown) => {
+        if (!cancelled) {
+          setError(cause instanceof Error ? cause.message : String(cause));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setWebLinksLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeSection, selectedServer?.id]);
 
   async function runAction(label: string, action: () => Promise<void>) {
     setBusyMessage(label);
@@ -156,6 +201,38 @@ export default function App() {
       const input = serverToInput(server);
       const updated = await api.saveServer(server.id, { ...input, favorite: !server.favorite });
       await loadState(updated.id);
+    });
+  }
+
+  async function refreshWebLinks(serverId: string) {
+    const links = await api.listWebLinks(serverId);
+    setWebLinks(links);
+  }
+
+  async function saveWebLink(server: ServerProfile, form: WebLinkFormModel) {
+    const errors = validateWebLinkForm(form);
+    if (hasWebLinkFormErrors(errors)) {
+      setError(Object.values(errors).find(Boolean) ?? "Fix the highlighted web link fields.");
+      return;
+    }
+
+    await runAction("Saving web link", async () => {
+      await api.saveWebLink(server.id, form.id ?? null, toWebLinkInput(form));
+      setEditingWebLink(null);
+      await refreshWebLinks(server.id);
+    });
+  }
+
+  async function deleteWebLink(server: ServerProfile, link: WebLink) {
+    await runAction("Deleting web link", async () => {
+      await api.deleteWebLink(link.id);
+      await refreshWebLinks(server.id);
+    });
+  }
+
+  async function openWebLink(server: ServerProfile, link: WebLink) {
+    await runAction("Opening web link", async () => {
+      await api.openWebLink(server.id, link.id);
     });
   }
 
@@ -287,6 +364,15 @@ export default function App() {
             onCopyCommand={copySshCommand}
             onLaunch={launchSsh}
             onToggleFavorite={toggleFavorite}
+            webLinks={webLinks}
+            webLinksLoading={webLinksLoading}
+            editingWebLink={editingWebLink}
+            onAddWebLink={() => setEditingWebLink(newWebLinkDraft())}
+            onEditWebLink={(link) => setEditingWebLink(newWebLinkDraft(link))}
+            onCancelWebLink={() => setEditingWebLink(null)}
+            onSaveWebLink={saveWebLink}
+            onDeleteWebLink={deleteWebLink}
+            onOpenWebLink={openWebLink}
             keyRefs={snapshot.sshKeys}
             hasAnyServers={hasAnyServers}
             hasActiveServerFilter={hasActiveServerFilter}
@@ -426,6 +512,15 @@ function ServerDetails({
   onCopyCommand,
   onLaunch,
   onToggleFavorite,
+  webLinks,
+  webLinksLoading,
+  editingWebLink,
+  onAddWebLink,
+  onEditWebLink,
+  onCancelWebLink,
+  onSaveWebLink,
+  onDeleteWebLink,
+  onOpenWebLink,
   hasAnyServers,
   hasActiveServerFilter,
   onAddServer,
@@ -440,6 +535,15 @@ function ServerDetails({
   onCopyCommand: (server: ServerProfile) => void;
   onLaunch: (server: ServerProfile) => void;
   onToggleFavorite: (server: ServerProfile) => void;
+  webLinks: WebLink[];
+  webLinksLoading: boolean;
+  editingWebLink: WebLinkFormModel | null;
+  onAddWebLink: () => void;
+  onEditWebLink: (link: WebLink) => void;
+  onCancelWebLink: () => void;
+  onSaveWebLink: (server: ServerProfile, form: WebLinkFormModel) => void;
+  onDeleteWebLink: (server: ServerProfile, link: WebLink) => void;
+  onOpenWebLink: (server: ServerProfile, link: WebLink) => void;
   hasAnyServers: boolean;
   hasActiveServerFilter: boolean;
   onAddServer: () => void;
@@ -525,6 +629,20 @@ function ServerDetails({
           <p className={server.notes?.trim() ? "notes" : "muted"}>{server.notes?.trim() || "No notes saved for this server."}</p>
           <p className="field-hint">Notes are plaintext local metadata. Do not store passwords, private keys, tokens, or sudo details here.</p>
         </section>
+
+        <WebLinksPanel
+          server={server}
+          links={webLinks}
+          loading={webLinksLoading}
+          editingLink={editingWebLink}
+          busy={busy}
+          onAdd={onAddWebLink}
+          onEdit={onEditWebLink}
+          onCancel={onCancelWebLink}
+          onSave={onSaveWebLink}
+          onDelete={onDeleteWebLink}
+          onOpen={onOpenWebLink}
+        />
       </section>
 
       <aside className="detail-side">
@@ -553,8 +671,8 @@ function ServerDetails({
           </div>
           <div className="planned-list">
             <span>Embedded terminal</span>
-            <span>Web admin links</span>
             <span>SSH config import</span>
+            <span>SFTP/RDP/tunnels</span>
           </div>
           <p className="muted">These are intentionally disabled until their backend behavior is implemented.</p>
         </section>
@@ -569,6 +687,160 @@ function Info({ label, value }: { label: string; value: string }) {
       <span>{label}</span>
       <strong>{value}</strong>
     </div>
+  );
+}
+
+function WebLinksPanel({
+  server,
+  links,
+  loading,
+  editingLink,
+  busy,
+  onAdd,
+  onEdit,
+  onCancel,
+  onSave,
+  onDelete,
+  onOpen,
+}: {
+  server: ServerProfile;
+  links: WebLink[];
+  loading: boolean;
+  editingLink: WebLinkFormModel | null;
+  busy: boolean;
+  onAdd: () => void;
+  onEdit: (link: WebLink) => void;
+  onCancel: () => void;
+  onSave: (server: ServerProfile, form: WebLinkFormModel) => void;
+  onDelete: (server: ServerProfile, link: WebLink) => void;
+  onOpen: (server: ServerProfile, link: WebLink) => void;
+}) {
+  return (
+    <section className="panel">
+      <div className="panel-heading">
+        <h3>Web/Admin Links</h3>
+        <button className="button compact" type="button" disabled={busy || Boolean(editingLink)} onClick={onAdd}>
+          <Plus size={15} />
+          Add link
+        </button>
+      </div>
+
+      {editingLink ? (
+        <WebLinkForm form={editingLink} busy={busy} onCancel={onCancel} onSave={(form) => onSave(server, form)} />
+      ) : null}
+
+      {loading ? <p className="muted">Loading web links...</p> : null}
+
+      {!loading && links.length === 0 && !editingLink ? (
+        <div className="empty-inline">
+          <ExternalLink size={30} />
+          <strong>No web admin links yet</strong>
+          <span>Add URLs for dashboards like Proxmox, router admin, NAS, or monitoring pages.</span>
+        </div>
+      ) : null}
+
+      {links.length > 0 ? (
+        <div className="web-link-list">
+          {links.map((link) => (
+            <div className="web-link-row" key={link.id}>
+              <ExternalLink size={18} />
+              <div>
+                <strong>{link.label}</strong>
+                <span>{link.url}</span>
+              </div>
+              <div className="row-actions">
+                <button className="button compact" type="button" disabled={busy} onClick={() => onOpen(server, link)}>
+                  <ExternalLink size={15} />
+                  Open
+                </button>
+                <button className="icon-button" type="button" aria-label={`Edit ${link.label}`} disabled={busy} onClick={() => onEdit(link)}>
+                  <Pencil size={16} />
+                </button>
+                <button className="icon-button danger" type="button" aria-label={`Delete ${link.label}`} disabled={busy} onClick={() => onDelete(server, link)}>
+                  <Trash2 size={16} />
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function WebLinkForm({
+  form,
+  busy,
+  onCancel,
+  onSave,
+}: {
+  form: WebLinkFormModel;
+  busy: boolean;
+  onCancel: () => void;
+  onSave: (form: WebLinkFormModel) => void;
+}) {
+  const [draft, setDraft] = useState(form);
+  const [submitted, setSubmitted] = useState(false);
+  const errors = validateWebLinkForm(draft);
+
+  useEffect(() => {
+    setDraft(form);
+    setSubmitted(false);
+  }, [form]);
+
+  return (
+    <form
+      className="web-link-form"
+      noValidate
+      onSubmit={(event) => {
+        event.preventDefault();
+        setSubmitted(true);
+        if (hasWebLinkFormErrors(errors)) {
+          return;
+        }
+        onSave(draft);
+      }}
+    >
+      <label>
+        Label
+        <input
+          value={draft.label}
+          onChange={(event) => setDraft({ ...draft, label: event.target.value })}
+          aria-invalid={submitted && Boolean(errors.label)}
+          aria-describedby={submitted && errors.label ? "web-link-label-error" : undefined}
+        />
+        {submitted && errors.label ? (
+          <span className="field-error" id="web-link-label-error">
+            {errors.label}
+          </span>
+        ) : null}
+      </label>
+      <label>
+        URL
+        <input
+          value={draft.url}
+          onChange={(event) => setDraft({ ...draft, url: event.target.value })}
+          placeholder="https://server.local:8006"
+          aria-invalid={submitted && Boolean(errors.url)}
+          aria-describedby={submitted && errors.url ? "web-link-url-error" : undefined}
+        />
+        {submitted && errors.url ? (
+          <span className="field-error" id="web-link-url-error">
+            {errors.url}
+          </span>
+        ) : (
+          <span className="field-hint">Only http:// and https:// links are allowed. Do not include credentials.</span>
+        )}
+      </label>
+      <div className="modal-actions">
+        <button type="button" className="button ghost" disabled={busy} onClick={onCancel}>
+          Cancel
+        </button>
+        <button type="submit" className="button primary" disabled={busy}>
+          Save link
+        </button>
+      </div>
+    </form>
   );
 }
 

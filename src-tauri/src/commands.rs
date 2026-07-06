@@ -1,10 +1,12 @@
 use tauri::State;
+use tauri_plugin_opener::OpenerExt;
 
 use crate::{
     db::Database,
     domain::{
         AppResult, AppSettings, AppStateSnapshot, Group, GroupInput, ImportCandidate,
-        ImportResult, ServerInput, ServerProfile, SshKeyInput, SshKeyRef,
+        ImportResult, ServerInput, ServerProfile, SshKeyInput, SshKeyRef, WebLink,
+        WebLinkInput,
     },
     launcher::{build_ssh_argv, format_argv_for_display, launch_ssh_in_terminal},
 };
@@ -102,8 +104,45 @@ pub fn launch_ssh(server_id: String, db: State<'_, Database>) -> AppResult<()> {
 }
 
 #[tauri::command]
-pub fn open_web_link(_server_id: String, _link_id: String) -> AppResult<()> {
-    Err("Web admin links are not implemented yet".to_string())
+pub fn list_web_links(server_id: String, db: State<'_, Database>) -> AppResult<Vec<WebLink>> {
+    db.list_web_links(&server_id)
+}
+
+#[tauri::command]
+pub fn create_web_link(
+    server_id: String,
+    input: WebLinkInput,
+    db: State<'_, Database>,
+) -> AppResult<WebLink> {
+    db.create_web_link(&server_id, input)
+}
+
+#[tauri::command]
+pub fn update_web_link(
+    id: String,
+    input: WebLinkInput,
+    db: State<'_, Database>,
+) -> AppResult<WebLink> {
+    db.update_web_link(&id, input)
+}
+
+#[tauri::command]
+pub fn delete_web_link(id: String, db: State<'_, Database>) -> AppResult<()> {
+    db.delete_web_link(&id)
+}
+
+#[tauri::command]
+pub fn open_web_link(
+    server_id: String,
+    link_id: String,
+    db: State<'_, Database>,
+    app: tauri::AppHandle,
+) -> AppResult<()> {
+    let link = db.get_web_link_for_server(&server_id, &link_id)?;
+    crate::domain::validate_web_link_url(&link.url)?;
+    app.opener()
+        .open_url(link.url, None::<&str>)
+        .map_err(|error| format!("Failed to open web link: {error}"))
 }
 
 #[tauri::command]

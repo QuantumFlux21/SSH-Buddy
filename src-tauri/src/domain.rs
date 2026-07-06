@@ -2,6 +2,7 @@ use std::collections::HashSet;
 
 use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
+use url::Url;
 use uuid::Uuid;
 
 pub type AppResult<T> = Result<T, String>;
@@ -44,6 +45,17 @@ pub struct SshKeyRef {
     pub path: String,
     pub fingerprint: Option<String>,
     pub comment: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WebLink {
+    pub id: String,
+    pub server_profile_id: String,
+    pub label: String,
+    pub url: String,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -110,6 +122,13 @@ pub struct SshKeyInput {
     pub path: String,
     pub fingerprint: Option<String>,
     pub comment: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebLinkInput {
+    pub label: String,
+    pub url: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -219,6 +238,39 @@ pub fn validate_ssh_key_input(input: &SshKeyInput) -> AppResult<()> {
 
     if normalize_text(&input.path).is_none() {
         return Err("Key path is required".to_string());
+    }
+
+    Ok(())
+}
+
+pub fn validate_web_link_input(input: &WebLinkInput) -> AppResult<()> {
+    if normalize_text(&input.label).is_none() {
+        return Err("Web link label is required".to_string());
+    }
+
+    validate_web_link_url(&input.url)?;
+
+    Ok(())
+}
+
+pub fn validate_web_link_url(value: &str) -> AppResult<()> {
+    let url = value.trim();
+    if url.is_empty() {
+        return Err("Web link URL is required".to_string());
+    }
+
+    let parsed = Url::parse(url).map_err(|_| "Web link URL must be a valid URL".to_string())?;
+    match parsed.scheme() {
+        "http" | "https" => {}
+        _ => return Err("Web link URL must start with http:// or https://".to_string()),
+    }
+
+    if parsed.host_str().is_none() {
+        return Err("Web link URL must include a host".to_string());
+    }
+
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err("Web link URL must not include embedded credentials".to_string());
     }
 
     Ok(())
