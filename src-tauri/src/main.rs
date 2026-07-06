@@ -9,11 +9,10 @@ mod ssh_config;
 use std::{fs, io};
 
 use commands::{
-    create_group, create_server, create_ssh_key_ref, create_web_link, delete_group,
-    delete_server, delete_ssh_key_ref, delete_web_link, get_app_state, get_ssh_command,
-    import_ssh_config, import_ssh_config_preview, launch_ssh, list_groups, list_servers,
-    list_ssh_key_refs, list_web_links, open_web_link, save_settings, update_server,
-    update_web_link,
+    create_group, create_server, create_ssh_key_ref, create_web_link, delete_group, delete_server,
+    delete_ssh_key_ref, delete_web_link, get_app_state, get_ssh_command, import_ssh_config,
+    import_ssh_config_preview, launch_ssh, list_groups, list_servers, list_ssh_key_refs,
+    list_web_links, open_web_link, save_settings, update_server, update_web_link,
 };
 use db::Database;
 use tauri::Manager;

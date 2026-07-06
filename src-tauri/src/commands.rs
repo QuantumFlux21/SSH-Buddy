@@ -4,9 +4,8 @@ use tauri_plugin_opener::OpenerExt;
 use crate::{
     db::Database,
     domain::{
-        AppResult, AppSettings, AppStateSnapshot, Group, GroupInput, ImportCandidate,
-        ImportResult, ServerInput, ServerProfile, SshKeyInput, SshKeyRef, WebLink,
-        WebLinkInput,
+        AppResult, AppSettings, AppStateSnapshot, Group, GroupInput, ImportCandidate, ImportResult,
+        ServerInput, ServerProfile, SshKeyInput, SshKeyRef, WebLink, WebLinkInput,
     },
     launcher::{build_ssh_argv, format_argv_for_display, launch_ssh_in_terminal},
 };
@@ -151,10 +150,7 @@ pub fn import_ssh_config_preview(db: State<'_, Database>) -> AppResult<Vec<Impor
 }
 
 #[tauri::command]
-pub fn import_ssh_config(
-    aliases: Vec<String>,
-    db: State<'_, Database>,
-) -> AppResult<ImportResult> {
+pub fn import_ssh_config(aliases: Vec<String>, db: State<'_, Database>) -> AppResult<ImportResult> {
     crate::ssh_config::import_selected(&db, aliases)
 }
 

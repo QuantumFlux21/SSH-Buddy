@@ -21,6 +21,7 @@ import {
 import { api } from "./lib/api";
 import { filterServers, groupName } from "./lib/filters";
 import { serverDestination, shortDate } from "./lib/format";
+import { formatImportPreviewSummary, formatImportResult } from "./lib/importSummary";
 import {
   hasServerFormErrors,
   newServerDraft,
@@ -42,6 +43,7 @@ import type {
   Group,
   GroupInput,
   ImportCandidate,
+  ImportResult,
   ServerProfile,
   SshKeyInput,
   SshKeyRef,
@@ -64,6 +66,7 @@ export default function App() {
   const [showImport, setShowImport] = useState(false);
   const [busyMessage, setBusyMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
   async function loadState(nextSelectedId?: string | null) {
     setError(null);
@@ -144,11 +147,15 @@ export default function App() {
     };
   }, [activeSection, selectedServer?.id]);
 
-  async function runAction(label: string, action: () => Promise<void>) {
+  async function runAction(label: string, action: () => Promise<void>, successMessage?: string) {
     setBusyMessage(label);
     setError(null);
+    setStatusMessage(null);
     try {
       await action();
+      if (successMessage) {
+        setStatusMessage(successMessage);
+      }
     } catch (cause: unknown) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -159,15 +166,20 @@ export default function App() {
   async function saveServer(form: ServerFormModel) {
     const errors = validateServerForm(form);
     if (hasServerFormErrors(errors)) {
+      setStatusMessage(null);
       setError(Object.values(errors).find(Boolean) ?? "Fix the highlighted server fields.");
       return;
     }
 
-    await runAction("Saving server", async () => {
-      const server = await api.saveServer(form.id ?? null, toServerInput(form));
-      setEditingServer(null);
-      await loadState(server.id);
-    });
+    await runAction(
+      "Saving server",
+      async () => {
+        const server = await api.saveServer(form.id ?? null, toServerInput(form));
+        setEditingServer(null);
+        await loadState(server.id);
+      },
+      form.id ? "Server updated." : "Server created.",
+    );
   }
 
   async function confirmDeleteServer() {
@@ -176,32 +188,48 @@ export default function App() {
     }
 
     const server = serverPendingDelete;
-    await runAction("Deleting server", async () => {
-      await api.deleteServer(server.id);
-      setServerPendingDelete(null);
-      await loadState();
-    });
+    await runAction(
+      "Deleting server",
+      async () => {
+        await api.deleteServer(server.id);
+        setServerPendingDelete(null);
+        await loadState();
+      },
+      "Server deleted.",
+    );
   }
 
   async function copySshCommand(server: ServerProfile) {
-    await runAction("Copying SSH command", async () => {
-      const command = await api.getSshCommand(server.id);
-      await navigator.clipboard.writeText(command);
-    });
+    await runAction(
+      "Copying SSH command",
+      async () => {
+        const command = await api.getSshCommand(server.id);
+        await navigator.clipboard.writeText(command);
+      },
+      "SSH command copied to clipboard.",
+    );
   }
 
   async function launchSsh(server: ServerProfile) {
-    await runAction("Launching SSH", async () => {
-      await api.launchSsh(server.id);
-    });
+    await runAction(
+      "Launching SSH",
+      async () => {
+        await api.launchSsh(server.id);
+      },
+      "SSH launch requested in your external terminal.",
+    );
   }
 
   async function toggleFavorite(server: ServerProfile) {
-    await runAction(server.favorite ? "Removing favorite" : "Marking favorite", async () => {
-      const input = serverToInput(server);
-      const updated = await api.saveServer(server.id, { ...input, favorite: !server.favorite });
-      await loadState(updated.id);
-    });
+    await runAction(
+      server.favorite ? "Removing favorite" : "Marking favorite",
+      async () => {
+        const input = serverToInput(server);
+        const updated = await api.saveServer(server.id, { ...input, favorite: !server.favorite });
+        await loadState(updated.id);
+      },
+      server.favorite ? "Removed from favorites." : "Marked as favorite.",
+    );
   }
 
   async function refreshWebLinks(serverId: string) {
@@ -212,28 +240,41 @@ export default function App() {
   async function saveWebLink(server: ServerProfile, form: WebLinkFormModel) {
     const errors = validateWebLinkForm(form);
     if (hasWebLinkFormErrors(errors)) {
+      setStatusMessage(null);
       setError(Object.values(errors).find(Boolean) ?? "Fix the highlighted web link fields.");
       return;
     }
 
-    await runAction("Saving web link", async () => {
-      await api.saveWebLink(server.id, form.id ?? null, toWebLinkInput(form));
-      setEditingWebLink(null);
-      await refreshWebLinks(server.id);
-    });
+    await runAction(
+      "Saving web link",
+      async () => {
+        await api.saveWebLink(server.id, form.id ?? null, toWebLinkInput(form));
+        setEditingWebLink(null);
+        await refreshWebLinks(server.id);
+      },
+      form.id ? "Web link updated." : "Web link added.",
+    );
   }
 
   async function deleteWebLink(server: ServerProfile, link: WebLink) {
-    await runAction("Deleting web link", async () => {
-      await api.deleteWebLink(link.id);
-      await refreshWebLinks(server.id);
-    });
+    await runAction(
+      "Deleting web link",
+      async () => {
+        await api.deleteWebLink(link.id);
+        await refreshWebLinks(server.id);
+      },
+      "Web link deleted.",
+    );
   }
 
   async function openWebLink(server: ServerProfile, link: WebLink) {
-    await runAction("Opening web link", async () => {
-      await api.openWebLink(server.id, link.id);
-    });
+    await runAction(
+      "Opening web link",
+      async () => {
+        await api.openWebLink(server.id, link.id);
+      },
+      "Web link opened in your browser.",
+    );
   }
 
   if (!snapshot) {
@@ -352,6 +393,7 @@ export default function App() {
         </header>
 
         {error ? <div className="status-banner danger">{error}</div> : null}
+        {statusMessage ? <div className="status-banner success">{statusMessage}</div> : null}
         {busyMessage ? <div className="status-banner">{busyMessage}...</div> : null}
 
         {activeSection === "servers" ? (
@@ -389,16 +431,24 @@ export default function App() {
           <GroupsPanel
             groups={snapshot.groups}
             onSave={async (input) => {
-              await runAction("Saving group", async () => {
-                await api.saveGroup(input);
-                await loadState();
-              });
+              await runAction(
+                "Saving group",
+                async () => {
+                  await api.saveGroup(input);
+                  await loadState();
+                },
+                "Group created.",
+              );
             }}
             onDelete={async (group) => {
-              await runAction("Deleting group", async () => {
-                await api.deleteGroup(group.id);
-                await loadState();
-              });
+              await runAction(
+                "Deleting group",
+                async () => {
+                  await api.deleteGroup(group.id);
+                  await loadState();
+                },
+                "Group deleted.",
+              );
             }}
           />
         ) : null}
@@ -407,16 +457,24 @@ export default function App() {
           <KeysPanel
             keys={snapshot.sshKeys}
             onSave={async (input) => {
-              await runAction("Saving key reference", async () => {
-                await api.saveSshKey(input);
-                await loadState();
-              });
+              await runAction(
+                "Saving key reference",
+                async () => {
+                  await api.saveSshKey(input);
+                  await loadState();
+                },
+                "SSH key reference saved.",
+              );
             }}
             onDelete={async (key) => {
-              await runAction("Deleting key reference", async () => {
-                await api.deleteSshKey(key.id);
-                await loadState();
-              });
+              await runAction(
+                "Deleting key reference",
+                async () => {
+                  await api.deleteSshKey(key.id);
+                  await loadState();
+                },
+                "SSH key reference deleted.",
+              );
             }}
           />
         ) : null}
@@ -425,10 +483,14 @@ export default function App() {
           <SettingsPanel
             settings={snapshot.settings}
             onSave={async (settings) => {
-              await runAction("Saving settings", async () => {
-                await api.saveSettings(settings);
-                await loadState();
-              });
+              await runAction(
+                "Saving settings",
+                async () => {
+                  await api.saveSettings(settings);
+                  await loadState();
+                },
+                "Settings saved.",
+              );
             }}
           />
         ) : null}
@@ -449,9 +511,10 @@ export default function App() {
       {showImport ? (
         <ImportDialog
           onClose={() => setShowImport(false)}
-          onImported={async (firstServerId) => {
+          onImported={async (result) => {
             setShowImport(false);
-            await loadState(firstServerId);
+            await loadState(result.servers[0]?.id ?? null);
+            setStatusMessage(formatImportResult(result));
           }}
         />
       ) : null}
@@ -1280,11 +1343,19 @@ function SettingsPanel({
   );
 }
 
-function ImportDialog({ onClose, onImported }: { onClose: () => void; onImported: (firstServerId: string | null) => void }) {
+function ImportDialog({
+  onClose,
+  onImported,
+}: {
+  onClose: () => void;
+  onImported: (result: ImportResult) => void | Promise<void>;
+}) {
   const [candidates, setCandidates] = useState<ImportCandidate[]>([]);
   const [selectedAliases, setSelectedAliases] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
+  const [importing, setImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const selectedCount = selectedAliases.size;
 
   useEffect(() => {
     api
@@ -1300,11 +1371,18 @@ function ImportDialog({ onClose, onImported }: { onClose: () => void; onImported
   }, []);
 
   async function importSelected() {
+    if (selectedCount === 0 || importing) {
+      return;
+    }
+
     setError(null);
+    setImporting(true);
     try {
       const result = await api.importSshConfig([...selectedAliases]);
-      onImported(result.servers[0]?.id ?? null);
+      setImporting(false);
+      await onImported(result);
     } catch (cause: unknown) {
+      setImporting(false);
       setError(cause instanceof Error ? cause.message : String(cause));
     }
   }
@@ -1317,13 +1395,14 @@ function ImportDialog({ onClose, onImported }: { onClose: () => void; onImported
             <p className="eyebrow">OpenSSH</p>
             <h2>Import ~/.ssh/config</h2>
           </div>
-          <button type="button" className="icon-button" aria-label="Close" onClick={onClose}>
+          <button type="button" className="icon-button" aria-label="Close" disabled={importing} onClick={onClose}>
             <X size={18} />
           </button>
         </div>
 
         {loading ? <p className="muted">Scanning SSH config...</p> : null}
         {error ? <div className="status-banner danger">{error}</div> : null}
+        {!loading && candidates.length > 0 ? <div className="status-banner neutral">{formatImportPreviewSummary(candidates)}</div> : null}
 
         <div className="import-list">
           {candidates.map((candidate) => {
@@ -1332,7 +1411,7 @@ function ImportDialog({ onClose, onImported }: { onClose: () => void; onImported
               <label className={selectable ? "import-row" : "import-row disabled"} key={candidate.alias}>
                 <input
                   type="checkbox"
-                  disabled={!selectable}
+                  disabled={!selectable || importing}
                   checked={selectedAliases.has(candidate.alias)}
                   onChange={(event) => {
                     const next = new Set(selectedAliases);
@@ -1377,11 +1456,11 @@ function ImportDialog({ onClose, onImported }: { onClose: () => void; onImported
         ) : null}
 
         <div className="modal-actions">
-          <button type="button" className="button ghost" onClick={onClose}>
+          <button type="button" className="button ghost" disabled={importing} onClick={onClose}>
             Cancel
           </button>
-          <button type="button" className="button primary" disabled={selectedAliases.size === 0} onClick={importSelected}>
-            Import selected
+          <button type="button" className="button primary" disabled={selectedCount === 0 || importing} onClick={importSelected}>
+            {importing ? "Importing..." : selectedCount > 0 ? `Import ${selectedCount} selected` : "No hosts selected"}
           </button>
         </div>
       </section>

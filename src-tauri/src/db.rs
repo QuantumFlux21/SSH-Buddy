@@ -9,9 +9,9 @@ use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use crate::domain::{
     default_settings, new_id, normalize_notes, normalize_optional, normalize_tag_names,
     normalize_text, now_timestamp, validate_app_settings, validate_group_input,
-    validate_server_input, validate_ssh_key_input, validate_web_link_input, AppResult,
-    AppSettings, Group, GroupInput, ServerInput, ServerProfile, SshKeyInput, SshKeyRef, Tag,
-    WebLink, WebLinkInput,
+    validate_server_input, validate_ssh_key_input, validate_web_link_input, AppResult, AppSettings,
+    Group, GroupInput, ServerInput, ServerProfile, SshKeyInput, SshKeyRef, Tag, WebLink,
+    WebLinkInput,
 };
 
 const MIGRATIONS: &[(&str, &str)] = &[
@@ -526,11 +526,7 @@ impl Database {
         list_web_links_for_server(&conn, server_id)
     }
 
-    pub fn create_web_link(
-        &self,
-        server_id: &str,
-        input: WebLinkInput,
-    ) -> AppResult<WebLink> {
+    pub fn create_web_link(&self, server_id: &str, input: WebLinkInput) -> AppResult<WebLink> {
         validate_web_link_input(&input)?;
 
         let conn = self.lock()?;
@@ -608,15 +604,11 @@ impl Database {
         Ok(())
     }
 
-    pub fn get_web_link_for_server(
-        &self,
-        server_id: &str,
-        link_id: &str,
-    ) -> AppResult<WebLink> {
+    pub fn get_web_link_for_server(&self, server_id: &str, link_id: &str) -> AppResult<WebLink> {
         let conn = self.lock()?;
         ensure_server_exists(&conn, server_id)?;
-        let link = get_web_link_by_id(&conn, link_id)?
-            .ok_or_else(|| "Web link not found".to_string())?;
+        let link =
+            get_web_link_by_id(&conn, link_id)?.ok_or_else(|| "Web link not found".to_string())?;
 
         if link.server_profile_id != server_id {
             return Err("Web link does not belong to this server".to_string());
@@ -891,7 +883,7 @@ fn key_label_from_path(path: &str) -> String {
 }
 
 fn to_error(error: rusqlite::Error) -> String {
-    error.to_string()
+    format!("Database error: {error}")
 }
 
 #[cfg(test)]
@@ -1098,7 +1090,8 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            db.get_web_link_for_server(&second.id, &link.id).unwrap_err(),
+            db.get_web_link_for_server(&second.id, &link.id)
+                .unwrap_err(),
             "Web link does not belong to this server"
         );
     }

@@ -264,9 +264,9 @@ fn apply_option(block: &mut HostBlock, keyword: &str, values: &[String]) {
             if block.identity_file.is_none() {
                 block.identity_file = Some(value);
             } else {
-                block
-                    .warnings
-                    .push("Multiple IdentityFile values detected; using the first one.".to_string());
+                block.warnings.push(
+                    "Multiple IdentityFile values detected; using the first one.".to_string(),
+                );
             }
         }
         "proxyjump" => block.proxy_jump = Some(value),
@@ -336,10 +336,16 @@ fn resolve_with_ssh_g(alias: &str) -> AppResult<Option<ResolvedHostConfig>> {
     let output = Command::new("ssh")
         .args(["-G", alias])
         .output()
-        .map_err(|error| format!("failed to run ssh -G: {error}"))?;
+        .map_err(|error| {
+            format!("OpenSSH client 'ssh' could not be run for import preview: {error}")
+        })?;
 
     if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if stderr.is_empty() {
+            return Err(format!("ssh -G exited with status {}", output.status));
+        }
+        return Err(stderr);
     }
 
     Ok(Some(parse_ssh_g_output(&String::from_utf8_lossy(
@@ -451,6 +457,10 @@ mod tests {
         Ok(None)
     }
 
+    fn failing_resolver(_: &str) -> AppResult<Option<ResolvedHostConfig>> {
+        Err("bad ssh config line 12".to_string())
+    }
+
     #[test]
     fn parses_simple_host_entries() {
         let parsed = parse_ssh_config(
@@ -547,8 +557,8 @@ mod tests {
             ",
         );
 
-        let result = import_selected_from_path(&db, &path, vec!["nas".to_string()], &no_resolver)
-            .unwrap();
+        let result =
+            import_selected_from_path(&db, &path, vec!["nas".to_string()], &no_resolver).unwrap();
 
         assert_eq!(result.imported, 1);
         let keys = db.list_ssh_key_refs().unwrap();
@@ -582,8 +592,8 @@ mod tests {
             ",
         );
 
-        let result = import_selected_from_path(&db, &path, vec!["nas".to_string()], &no_resolver)
-            .unwrap();
+        let result =
+            import_selected_from_path(&db, &path, vec!["nas".to_string()], &no_resolver).unwrap();
 
         assert_eq!(db.list_ssh_key_refs().unwrap().len(), 1);
         assert_eq!(result.servers[0].identity_file_id, Some(existing.id));
@@ -601,8 +611,9 @@ mod tests {
             ",
         );
 
-        let result = import_selected_from_path(&db, &path, vec!["router".to_string()], &no_resolver)
-            .unwrap();
+        let result =
+            import_selected_from_path(&db, &path, vec!["router".to_string()], &no_resolver)
+                .unwrap();
 
         assert_eq!(result.imported, 1);
         assert_eq!(result.servers[0].display_name, "router");
@@ -618,6 +629,23 @@ mod tests {
         assert!(import_preview_from_path(&db, &path, &no_resolver)
             .unwrap()
             .is_empty());
+    }
+
+    #[test]
+    fn resolver_errors_are_returned_as_candidate_warnings() {
+        let db = test_db();
+        let (_dir, path) = write_config(
+            "
+            Host nas
+              HostName nas.local
+            ",
+        );
+
+        let preview = import_preview_from_path(&db, &path, &failing_resolver).unwrap();
+
+        assert_eq!(preview.len(), 1);
+        assert!(preview[0].selected);
+        assert!(preview[0].warnings[0].contains("bad ssh config line 12"));
     }
 
     #[test]

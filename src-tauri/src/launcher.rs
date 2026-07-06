@@ -7,8 +7,7 @@ use std::{
 };
 
 use crate::domain::{
-    AppResult, AppSettings, ServerProfile, TERMINAL_PREFERENCE_AUTO,
-    SUPPORTED_TERMINAL_PREFERENCES,
+    AppResult, AppSettings, ServerProfile, SUPPORTED_TERMINAL_PREFERENCES, TERMINAL_PREFERENCE_AUTO,
 };
 
 const TERMINAL_ORDER: &[&str] = &[
@@ -121,9 +120,8 @@ pub fn launch_ssh_in_terminal(
     identity_file: Option<&str>,
     settings: &AppSettings,
 ) -> AppResult<()> {
-    let ssh_argv = build_ssh_argv(server, identity_file)?;
-    let terminal = select_terminal(&settings.terminal_preference, command_in_path)?;
-    let command = terminal_command_for(&terminal, &ssh_argv)?;
+    let command = build_launch_command(server, identity_file, settings, command_in_path)?;
+    let terminal = command.program.clone();
 
     Command::new(&command.program)
         .args(&command.args)
@@ -131,6 +129,29 @@ pub fn launch_ssh_in_terminal(
         .map_err(|error| format!("Failed to launch {}: {error}", terminal_label(&terminal)))?;
 
     Ok(())
+}
+
+pub fn build_launch_command<F>(
+    server: &ServerProfile,
+    identity_file: Option<&str>,
+    settings: &AppSettings,
+    available: F,
+) -> AppResult<ProcessCommand>
+where
+    F: Fn(&str) -> bool,
+{
+    if !available("ssh") {
+        return Err(
+            "OpenSSH client 'ssh' was not found in PATH. Install OpenSSH and try again."
+                .to_string(),
+        );
+    }
+
+    validate_identity_file_path(identity_file)?;
+    let ssh_argv = build_ssh_argv(server, identity_file)?;
+    let terminal = select_terminal(&settings.terminal_preference, available)?;
+
+    terminal_command_for(&terminal, &ssh_argv)
 }
 
 fn command_in_path(command: &str) -> bool {
@@ -167,6 +188,22 @@ fn is_executable_file(path: &Path) -> bool {
 
 fn expand_home_path(path: &str) -> String {
     expand_home_path_with(path, env::var_os("HOME"))
+}
+
+fn validate_identity_file_path(identity_file: Option<&str>) -> AppResult<()> {
+    let Some(identity_file) = identity_file.and_then(normalize_optional) else {
+        return Ok(());
+    };
+    let expanded = expand_home_path(&identity_file);
+    let path = Path::new(&expanded);
+    let metadata = fs::metadata(path)
+        .map_err(|_| format!("Selected SSH key file was not found: {expanded}"))?;
+
+    if !metadata.is_file() {
+        return Err(format!("Selected SSH key path is not a file: {expanded}"));
+    }
+
+    Ok(())
 }
 
 fn expand_home_path_with(path: &str, home: Option<OsString>) -> String {
@@ -222,6 +259,7 @@ fn terminal_label(terminal: &str) -> &str {
 mod tests {
     use super::*;
     use crate::domain::Tag;
+    use tempfile::tempdir;
 
     fn sample_server() -> ServerProfile {
         ServerProfile {
@@ -237,6 +275,13 @@ mod tests {
             tags: Vec::<Tag>::new(),
             created_at: "2026-01-01T00:00:00.000Z".to_string(),
             updated_at: "2026-01-01T00:00:00.000Z".to_string(),
+        }
+    }
+
+    fn sample_settings() -> AppSettings {
+        AppSettings {
+            terminal_preference: TERMINAL_PREFERENCE_AUTO.to_string(),
+            safety_warnings_enabled: true,
         }
     }
 
@@ -287,10 +332,8 @@ mod tests {
 
     #[test]
     fn expands_home_in_identity_file_path() {
-        let expanded = expand_home_path_with(
-            "~/.ssh/id_ed25519",
-            Some(OsString::from("/home/alex")),
-        );
+        let expanded =
+            expand_home_path_with("~/.ssh/id_ed25519", Some(OsString::from("/home/alex")));
 
         assert_eq!(expanded, "/home/alex/.ssh/id_ed25519");
     }
@@ -349,5 +392,49 @@ mod tests {
             select_terminal("konsole", |_| false).unwrap_err(),
             "Preferred terminal 'Konsole' was not found in PATH"
         );
+    }
+
+    #[test]
+    fn launch_preflight_requires_ssh_binary() {
+        assert_eq!(
+            build_launch_command(&sample_server(), None, &sample_settings(), |_| false)
+                .unwrap_err(),
+            "OpenSSH client 'ssh' was not found in PATH. Install OpenSSH and try again."
+        );
+    }
+
+    #[test]
+    fn launch_preflight_rejects_missing_identity_file() {
+        let error = build_launch_command(
+            &sample_server(),
+            Some("/tmp/ssh-buddy-missing-test-key"),
+            &sample_settings(),
+            |command| command == "ssh" || command == "konsole",
+        )
+        .unwrap_err();
+
+        assert!(error.contains("Selected SSH key file was not found"));
+    }
+
+    #[test]
+    fn launch_preflight_builds_process_command() {
+        let dir = tempdir().unwrap();
+        let key_path = dir.path().join("id_ed25519");
+        fs::write(&key_path, "not a real key").unwrap();
+
+        let command = build_launch_command(
+            &sample_server(),
+            Some(key_path.to_str().unwrap()),
+            &sample_settings(),
+            |command| command == "ssh" || command == "konsole",
+        )
+        .unwrap();
+
+        assert_eq!(command.program, "konsole");
+        assert_eq!(command.args[0], "-e");
+        assert!(command.args.contains(&"ssh".to_string()));
+        assert!(command
+            .args
+            .contains(&key_path.to_string_lossy().into_owned()));
     }
 }

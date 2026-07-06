@@ -22,8 +22,27 @@ Open a private security advisory on GitHub when the repository is public. Until 
 
 ## SSH Key Handling
 
-The app should store references to key files, labels, public fingerprints, and profile metadata only. Private key contents stay in user-controlled OpenSSH files, the OS, `ssh-agent`, or a dedicated password manager chosen by the user.
+The app stores references to key files, labels, optional public fingerprints, and profile metadata only. Private key contents stay in user-controlled OpenSSH files, the OS, `ssh-agent`, or a dedicated password manager chosen by the user.
 
 ## Privileged Workflows
 
 SSH-Buddy must not automate sudo by storing or injecting sudo passwords. Normal interactive sudo prompts remain the default. Any future automation around privileged commands must require explicit user configuration, clear warnings, and narrow command scope.
+
+## Current MVP Guarantees
+
+- SSH launch uses the system `ssh` binary and argv/process APIs.
+- SSH-Buddy does not pass SSH commands through a shell for launch.
+- SSH config import reads `~/.ssh/config` but does not create, edit, or overwrite it.
+- Import stores explicit `IdentityFile` paths as key references only.
+- Web/admin links must be `http://` or `https://` and must not contain embedded credentials.
+- Notes are plaintext local metadata and should not contain secrets.
+
+## What SSH-Buddy Does Not Do
+
+- Does not store private key contents.
+- Does not store SSH passwords or passphrases.
+- Does not store sudo passwords.
+- Does not inject passwords into SSH, sudo, remote shells, RDP, FTP, or web URLs.
+- Does not automate root login or privileged command execution.
+- Does not enable agent forwarding by default.
+- Does not implement SFTP, RDP, tunnels, embedded terminal sessions, sync, or KeePassXC integration in the MVP.

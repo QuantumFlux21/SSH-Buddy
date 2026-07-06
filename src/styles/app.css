@@ -367,6 +367,18 @@ button {
   color: #b5f5d6;
 }
 
+.status-banner.neutral {
+  border-color: var(--line-soft);
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.status-banner.success {
+  border-color: rgba(66, 211, 146, 0.32);
+  color: #b5f5d6;
+  background: rgba(66, 211, 146, 0.08);
+}
+
 .status-banner.danger,
 .error-text {
   border-color: rgba(255, 107, 107, 0.38);

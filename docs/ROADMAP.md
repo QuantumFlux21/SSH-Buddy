@@ -8,54 +8,64 @@ Status: complete.
 - React, TypeScript, and Vite frontend.
 - Rust entrypoint and Tauri command registration.
 - Linux development script for WebKitGTK/Wayland.
-- Baseline README, security policy, and CI workflow.
+- Baseline README, security policy, and architecture docs.
 
 ## SQLite Persistence
 
-Status: next.
+Status: complete.
 
-- Add app-owned SQLite database and migrations.
-- Persist server profiles, groups, tags, key references, web links, connection actions, and settings.
-- Keep private keys and passwords out of the database.
+- App-owned SQLite database in the Tauri app data directory.
+- Migrations tracked through `schema_migrations`.
+- Persisted server profiles, groups, tags, SSH key references, web links, and settings.
+- Private keys and passwords stay out of the database.
 
 ## Server CRUD
 
-Status: planned.
+Status: complete.
 
-- Server, group, tag, key reference CRUD.
-- Notes and search/filtering.
+- Server create, edit, delete, favorite, notes, tags, and search/filtering.
+- Group and SSH key reference management.
+- Delete confirmation and plaintext-notes warning.
 
 ## SSH Config Import
 
-Status: planned.
+Status: complete.
 
-- `~/.ssh/config` import preview.
-- Concrete host import only for the first version.
-- Duplicate handling and import warnings.
+- Read-only `~/.ssh/config` discovery.
+- Preview-first import for concrete `Host` aliases.
+- Wildcard/advanced pattern warnings.
+- Duplicate detection.
+- Selected import only.
+- Explicit `IdentityFile` values become key path references, not key contents.
 
 ## External Terminal Launch
 
-Status: planned.
+Status: complete.
 
 - Build OpenSSH argv in Rust.
-- Launch preferred Linux terminal.
-- Keep copy-command behavior available.
+- Launch supported Linux terminals: Konsole, kitty, Alacritty, WezTerm, GNOME Terminal, and xterm.
+- Preferred terminal setting with auto-detect.
+- Copy-command behavior.
+- Preflight errors for missing OpenSSH, missing supported terminal, and missing selected key files.
 
 ## Web Admin Links
 
-Status: planned.
+Status: complete.
 
 - Store web links per server.
-- Validate `http://` and `https://` URLs.
+- Validate only `http://` and `https://` URLs.
+- Reject embedded URL credentials.
 - Open links through the OS/browser.
 
 ## Security Hardening
 
-Status: planned.
+Status: in progress.
 
 - Keep command execution backend-owned and narrowly scoped.
-- Add safety warnings for root login, agent forwarding, password storage, and privileged command automation.
-- Expand tests around validation, command generation, and persistence.
+- Keep SSH private keys, passphrases, SSH passwords, sudo passwords, and remote passwords out of app storage.
+- Use argv/process APIs instead of shell interpolation for SSH launch.
+- Keep sudo/root automation out of scope.
+- Continue expanding tests around validation, command generation, import, and persistence.
 
 ## Release Packaging
 
@@ -75,4 +85,8 @@ Status: planned.
 - SSH tunnels and port forwarding.
 - Embedded terminal tabs.
 - SCP upload/download helper.
-- VNC launch, Wake-on-LAN, custom command snippets, KeePassXC integration, and Windows/macOS polish.
+- VNC launch.
+- Wake-on-LAN.
+- Custom command snippets.
+- KeePassXC integration.
+- Windows/macOS polish.
