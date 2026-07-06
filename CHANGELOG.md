@@ -4,6 +4,12 @@ All notable changes to SSH-Buddy will be documented in this file.
 
 ## Unreleased
 
+No unreleased changes yet.
+
+## 0.3.0 - 2026-07-06
+
+SFTP and RDP external launcher feature release.
+
 ### Added
 
 - External terminal SFTP launch using the system OpenSSH `sftp` client.

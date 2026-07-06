@@ -62,7 +62,7 @@ Status: complete.
 
 ## SFTP External Launch
 
-Status: complete for the next release.
+Status: complete for v0.3.0.
 
 - Build OpenSSH `sftp` argv in Rust from saved server profile data.
 - Launch `sftp` in an external terminal using the existing terminal launcher.
@@ -73,13 +73,13 @@ Status: complete for the next release.
 
 ## RDP External Launch
 
-Status: complete for the next release.
+Status: complete for v0.3.0.
 
 - Store optional RDP settings per server profile.
 - Detect FreeRDP clients in order: `xfreerdp3`, then `xfreerdp`.
 - Launch RDP externally through argv/process APIs.
 - Copy RDP command behavior.
-- Support username, domain, port, fullscreen, multi-monitor, dimensions, and color depth.
+- Support username, domain, port, fullscreen, multi-monitor, monitor IDs, dimensions, and color depth.
 - Never store or pass RDP passwords.
 - Keep embedded RDP and arbitrary FreeRDP option strings out of scope.
 
@@ -106,13 +106,14 @@ Status: complete.
 
 ## Security Hardening
 
-Status: complete for v0.2.0; release hardening continues.
+Status: complete for v0.3.0; release hardening continues.
 
 - Keep command execution backend-owned and narrowly scoped.
 - Keep SSH private keys, passphrases, SSH passwords, sudo passwords, and remote passwords out of app storage.
 - Use argv/process APIs instead of shell interpolation for SSH, SFTP, RDP, and tunnel launch.
 - Keep sudo/root automation out of scope.
-- Validate ProxyJump and tunnel values before save and before launch.
+- Validate ProxyJump, tunnel, SFTP, and RDP values before save and before launch.
+- Keep arbitrary FreeRDP option strings and RDP password handling out of scope.
 - Continue expanding tests around validation, command generation, import, and persistence.
 
 ## Release Packaging
@@ -128,13 +129,26 @@ Status: complete for v0.1.0; release hardening continues.
 
 ## v0.2.0 Release Readiness
 
-Status: ready pending final version bump, release workflow run, and release smoke test.
+Status: complete.
 
 - Validate ProxyJump and tunnel end-to-end flows.
 - Validate GitHub release metadata and keep v0.2.0 marked as a pre-release if appropriate.
 - Smoke-test the Linux AppImage on CachyOS/KDE Wayland.
 - Track local rolling-release AppImage packaging failures separately from CI release packaging.
 - Bump package/app versions to `0.2.0` only in the final release-prep commit before tagging.
+
+## v0.3.0 Release Readiness
+
+Status: ready pending final version bump, release workflow run, and release smoke test.
+
+- Validate SFTP external launch and copy-command behavior.
+- Validate RDP external launch and copy-command behavior.
+- Validate RDP username, domain, port, fullscreen, dimensions, color depth, multi-monitor, and monitor ID settings.
+- Confirm RDP monitor IDs are passed as `/monitors:<ids>` only after validation and are not arbitrary FreeRDP options.
+- Confirm SFTP/RDP password storage remains out of scope.
+- Smoke-test the Linux AppImage on CachyOS/KDE Wayland if available.
+- Track local rolling-release AppImage packaging failures separately from CI release packaging.
+- Bump package/app versions to `0.3.0` only in the final release-prep commit before tagging.
 
 ## Post-MVP
 

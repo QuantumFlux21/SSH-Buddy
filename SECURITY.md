@@ -38,6 +38,7 @@ SSH-Buddy must not automate sudo by storing or injecting sudo passwords. Normal 
 - ProxyJump values are stored as local metadata and passed to OpenSSH with `-J` after validation.
 - SFTP launch uses the system OpenSSH `sftp` client and passes ProxyJump with `-o ProxyJump=...` for compatibility.
 - RDP launch uses `xfreerdp3` or `xfreerdp` and never includes `/p:` password arguments.
+- RDP monitor selection is passed only as validated `/monitors:<ids>` values.
 - Local SSH tunnels are launched with OpenSSH `-N -L` after validating bind host, remote host, and ports.
 - Web/admin links must be `http://` or `https://` and must not contain embedded credentials.
 - Notes are plaintext local metadata and should not contain secrets.
