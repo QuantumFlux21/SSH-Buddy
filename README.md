@@ -175,7 +175,7 @@ The release model is one app and one codebase with platform-specific artifacts:
 
 There is no single universal installer for every operating system.
 
-Windows and macOS pre-release builds are unsigned. Windows SmartScreen, macOS Gatekeeper, and browser download warnings may appear. Proper Windows code signing and macOS signing/notarization are future release-hardening work.
+Windows and macOS builds are unsigned. Windows SmartScreen, macOS Gatekeeper, and browser download warnings may appear. Proper Windows code signing and macOS signing/notarization are future release-hardening work.
 
 ## Maintainer Release Process
 
