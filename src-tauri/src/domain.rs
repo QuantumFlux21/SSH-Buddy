@@ -19,6 +19,8 @@ pub const SUPPORTED_TERMINAL_PREFERENCES: &[&str] = &[
 ];
 pub const TUNNEL_TYPE_LOCAL: &str = "local";
 pub const DEFAULT_LOCAL_BIND_HOST: &str = "127.0.0.1";
+pub const DEFAULT_RDP_PORT: u16 = 3389;
+pub const SUPPORTED_RDP_COLOR_DEPTHS: &[u16] = &[16, 24, 32];
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -73,6 +75,23 @@ pub struct Tunnel {
     pub local_port: Option<u16>,
     pub remote_host: Option<String>,
     pub remote_port: Option<u16>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RdpSettings {
+    pub server_profile_id: String,
+    pub enabled: bool,
+    pub username: Option<String>,
+    pub domain: Option<String>,
+    pub port: u16,
+    pub fullscreen: bool,
+    pub multi_monitor: bool,
+    pub width: Option<u16>,
+    pub height: Option<u16>,
+    pub color_depth: Option<u16>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -159,6 +178,20 @@ pub struct TunnelInput {
     pub local_port: Option<u32>,
     pub remote_host: Option<String>,
     pub remote_port: Option<u32>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RdpSettingsInput {
+    pub enabled: bool,
+    pub username: Option<String>,
+    pub domain: Option<String>,
+    pub port: Option<u32>,
+    pub fullscreen: bool,
+    pub multi_monitor: bool,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub color_depth: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -449,6 +482,64 @@ pub fn normalize_tunnel_bind_host(value: Option<String>) -> String {
         .unwrap_or_else(|| DEFAULT_LOCAL_BIND_HOST.to_string())
 }
 
+pub fn validate_rdp_settings_input(input: &RdpSettingsInput) -> AppResult<()> {
+    validate_rdp_port(input.port.unwrap_or(u32::from(DEFAULT_RDP_PORT)))?;
+
+    if let Some(username) = &input.username {
+        validate_rdp_text_field(username, "RDP username")?;
+    }
+
+    if let Some(domain) = &input.domain {
+        validate_rdp_text_field(domain, "RDP domain")?;
+    }
+
+    match (input.width, input.height) {
+        (None, None) => {}
+        (Some(width), Some(height)) => {
+            validate_rdp_dimension(width, "RDP width")?;
+            validate_rdp_dimension(height, "RDP height")?;
+        }
+        _ => return Err("RDP width and height must be set together".to_string()),
+    }
+
+    if let Some(depth) = input.color_depth {
+        if !SUPPORTED_RDP_COLOR_DEPTHS.contains(&(depth as u16)) {
+            return Err("RDP color depth must be 16, 24, or 32".to_string());
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_rdp_port(port: u32) -> AppResult<()> {
+    if (1..=65_535).contains(&port) {
+        Ok(())
+    } else {
+        Err("RDP port must be between 1 and 65535".to_string())
+    }
+}
+
+fn validate_rdp_dimension(value: u32, label: &str) -> AppResult<()> {
+    if (320..=16_384).contains(&value) {
+        Ok(())
+    } else {
+        Err(format!("{label} must be between 320 and 16384"))
+    }
+}
+
+fn validate_rdp_text_field(value: &str, label: &str) -> AppResult<()> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Ok(());
+    }
+
+    if trimmed.chars().any(char::is_control) {
+        return Err(format!("{label} must not contain control characters"));
+    }
+
+    Ok(())
+}
+
 fn validate_tunnel_port(value: Option<u32>, label: &str) -> AppResult<()> {
     match value {
         Some(port) if (1..=65_535).contains(&port) => Ok(()),
@@ -580,6 +671,20 @@ mod tests {
         }
     }
 
+    fn valid_rdp_settings_input() -> RdpSettingsInput {
+        RdpSettingsInput {
+            enabled: true,
+            username: Some("labuser".to_string()),
+            domain: Some("LAB".to_string()),
+            port: Some(3389),
+            fullscreen: false,
+            multi_monitor: false,
+            width: Some(1920),
+            height: Some(1080),
+            color_depth: Some(32),
+        }
+    }
+
     #[test]
     fn validates_tunnel_input() {
         assert!(validate_tunnel_input(&valid_tunnel_input()).is_ok());
@@ -629,6 +734,41 @@ mod tests {
         assert_eq!(
             validate_tunnel_input(&input).unwrap_err(),
             "Remote host contains unsupported characters. Use a hostname or IP address."
+        );
+    }
+
+    #[test]
+    fn validates_rdp_settings_input() {
+        assert!(validate_rdp_settings_input(&valid_rdp_settings_input()).is_ok());
+
+        let mut input = valid_rdp_settings_input();
+        input.port = Some(0);
+        assert_eq!(
+            validate_rdp_settings_input(&input).unwrap_err(),
+            "RDP port must be between 1 and 65535"
+        );
+
+        let mut input = valid_rdp_settings_input();
+        input.width = Some(1920);
+        input.height = None;
+        assert_eq!(
+            validate_rdp_settings_input(&input).unwrap_err(),
+            "RDP width and height must be set together"
+        );
+
+        let mut input = valid_rdp_settings_input();
+        input.width = Some(100);
+        input.height = Some(1080);
+        assert_eq!(
+            validate_rdp_settings_input(&input).unwrap_err(),
+            "RDP width must be between 320 and 16384"
+        );
+
+        let mut input = valid_rdp_settings_input();
+        input.color_depth = Some(8);
+        assert_eq!(
+            validate_rdp_settings_input(&input).unwrap_err(),
+            "RDP color depth must be 16, 24, or 32"
         );
     }
 

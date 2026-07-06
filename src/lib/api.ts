@@ -6,6 +6,8 @@ import type {
   GroupInput,
   ImportCandidate,
   ImportResult,
+  RdpSettings,
+  RdpSettingsInput,
   ServerInput,
   ServerProfile,
   SshKeyInput,
@@ -64,6 +66,7 @@ const mockState: AppStateSnapshot = {
 };
 const mockWebLinks: Record<string, WebLink[]> = {};
 const mockTunnels: Record<string, Tunnel[]> = {};
+const mockRdpSettings: Record<string, RdpSettings> = {};
 
 async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   if (canUseTauri()) {
@@ -130,6 +133,7 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
       mockState.servers = mockState.servers.filter((server) => server.id !== serverId);
       delete mockWebLinks[serverId];
       delete mockTunnels[serverId];
+      delete mockRdpSettings[serverId];
       return undefined as T;
     }
     case "create_group": {
@@ -227,6 +231,95 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
         throw new Error("Server not found");
       }
       throw new Error("SFTP launch requires the Tauri desktop app");
+    }
+    case "get_rdp_settings": {
+      const serverId = args?.serverId as string;
+      if (!mockState.servers.some((server) => server.id === serverId)) {
+        throw new Error("Server not found");
+      }
+      return structuredClone(mockRdpSettings[serverId] ?? null) as T;
+    }
+    case "save_rdp_settings": {
+      const serverId = args?.serverId as string;
+      const input = args?.input as RdpSettingsInput;
+      if (!mockState.servers.some((server) => server.id === serverId)) {
+        throw new Error("Server not found");
+      }
+      const timestamp = now();
+      const settings: RdpSettings = {
+        serverProfileId: serverId,
+        enabled: input.enabled,
+        username: input.username?.trim() || null,
+        domain: input.domain?.trim() || null,
+        port: input.port ?? 3389,
+        fullscreen: input.fullscreen,
+        multiMonitor: input.multiMonitor,
+        width: input.width ?? null,
+        height: input.height ?? null,
+        colorDepth: input.colorDepth ?? null,
+        createdAt: mockRdpSettings[serverId]?.createdAt ?? timestamp,
+        updatedAt: timestamp,
+      };
+      mockRdpSettings[serverId] = settings;
+      return structuredClone(settings) as T;
+    }
+    case "delete_rdp_settings": {
+      const serverId = args?.serverId as string;
+      if (!mockState.servers.some((server) => server.id === serverId)) {
+        throw new Error("Server not found");
+      }
+      delete mockRdpSettings[serverId];
+      return undefined as T;
+    }
+    case "get_rdp_command": {
+      const server = mockState.servers.find((item) => item.id === args?.serverId);
+      const settings = mockRdpSettings[args?.serverId as string];
+      if (!server) {
+        throw new Error("Server not found");
+      }
+      if (!settings) {
+        throw new Error("RDP is not configured for this server");
+      }
+      if (!settings.enabled) {
+        throw new Error("RDP is not enabled for this server");
+      }
+      const parts = ["xfreerdp3", `/v:${server.host}:${settings.port}`];
+      if (settings.username) {
+        parts.push(`/u:${settings.username}`);
+      }
+      if (settings.domain) {
+        parts.push(`/d:${settings.domain}`);
+      }
+      if (settings.fullscreen) {
+        parts.push("/f");
+      }
+      if (settings.multiMonitor) {
+        parts.push("/multimon");
+      }
+      if (settings.width) {
+        parts.push(`/w:${settings.width}`);
+      }
+      if (settings.height) {
+        parts.push(`/h:${settings.height}`);
+      }
+      if (settings.colorDepth) {
+        parts.push(`/bpp:${settings.colorDepth}`);
+      }
+      return parts.join(" ") as T;
+    }
+    case "launch_rdp": {
+      const server = mockState.servers.find((item) => item.id === args?.serverId);
+      const settings = mockRdpSettings[args?.serverId as string];
+      if (!server) {
+        throw new Error("Server not found");
+      }
+      if (!settings) {
+        throw new Error("RDP is not configured for this server");
+      }
+      if (!settings.enabled) {
+        throw new Error("RDP is not enabled for this server");
+      }
+      throw new Error("RDP launch requires the Tauri desktop app");
     }
     case "list_tunnels": {
       const serverId = args?.serverId as string;
@@ -429,6 +522,11 @@ export const api = {
   launchSsh: (serverId: string) => call<void>("launch_ssh", { serverId }),
   getSftpCommand: (serverId: string) => call<string>("get_sftp_command", { serverId }),
   launchSftp: (serverId: string) => call<void>("launch_sftp", { serverId }),
+  getRdpSettings: (serverId: string) => call<RdpSettings | null>("get_rdp_settings", { serverId }),
+  saveRdpSettings: (serverId: string, input: RdpSettingsInput) => call<RdpSettings>("save_rdp_settings", { serverId, input }),
+  deleteRdpSettings: (serverId: string) => call<void>("delete_rdp_settings", { serverId }),
+  getRdpCommand: (serverId: string) => call<string>("get_rdp_command", { serverId }),
+  launchRdp: (serverId: string) => call<void>("launch_rdp", { serverId }),
   listTunnels: (serverId: string) => call<Tunnel[]>("list_tunnels", { serverId }),
   saveTunnel: (serverId: string, id: string | null, input: TunnelInput) =>
     id ? call<Tunnel>("update_tunnel", { id, input }) : call<Tunnel>("create_tunnel", { serverId, input }),

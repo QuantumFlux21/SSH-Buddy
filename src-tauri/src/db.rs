@@ -9,9 +9,10 @@ use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use crate::domain::{
     default_settings, new_id, normalize_notes, normalize_optional, normalize_tag_names,
     normalize_text, normalize_tunnel_bind_host, now_timestamp, validate_app_settings,
-    validate_group_input, validate_server_input, validate_ssh_key_input, validate_tunnel_input,
-    validate_web_link_input, AppResult, AppSettings, Group, GroupInput, ServerInput, ServerProfile,
-    SshKeyInput, SshKeyRef, Tag, Tunnel, TunnelInput, WebLink, WebLinkInput,
+    validate_group_input, validate_rdp_settings_input, validate_server_input,
+    validate_ssh_key_input, validate_tunnel_input, validate_web_link_input, AppResult, AppSettings,
+    Group, GroupInput, RdpSettings, RdpSettingsInput, ServerInput, ServerProfile, SshKeyInput,
+    SshKeyRef, Tag, Tunnel, TunnelInput, WebLink, WebLinkInput, DEFAULT_RDP_PORT,
 };
 
 const MIGRATIONS: &[(&str, &str)] = &[
@@ -31,6 +32,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
     (
         "005_server_tunnels",
         include_str!("../migrations/005_server_tunnels.sql"),
+    ),
+    (
+        "006_server_rdp_settings",
+        include_str!("../migrations/006_server_rdp_settings.sql"),
     ),
 ];
 
@@ -743,6 +748,71 @@ impl Database {
         Ok(tunnel)
     }
 
+    pub fn get_rdp_settings(&self, server_id: &str) -> AppResult<Option<RdpSettings>> {
+        let conn = self.lock()?;
+        ensure_server_exists(&conn, server_id)?;
+        get_rdp_settings_by_server(&conn, server_id)
+    }
+
+    pub fn save_rdp_settings(
+        &self,
+        server_id: &str,
+        input: RdpSettingsInput,
+    ) -> AppResult<RdpSettings> {
+        validate_rdp_settings_input(&input)?;
+
+        let conn = self.lock()?;
+        ensure_server_exists(&conn, server_id)?;
+        let now = now_timestamp();
+        conn.execute(
+            "
+            INSERT INTO server_rdp_settings (
+              server_profile_id, enabled, username, domain, port, fullscreen,
+              multi_monitor, width, height, color_depth, created_at, updated_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11)
+            ON CONFLICT(server_profile_id) DO UPDATE SET
+              enabled = excluded.enabled,
+              username = excluded.username,
+              domain = excluded.domain,
+              port = excluded.port,
+              fullscreen = excluded.fullscreen,
+              multi_monitor = excluded.multi_monitor,
+              width = excluded.width,
+              height = excluded.height,
+              color_depth = excluded.color_depth,
+              updated_at = excluded.updated_at
+            ",
+            params![
+                server_id,
+                bool_to_i64(input.enabled),
+                normalize_optional(input.username),
+                normalize_optional(input.domain),
+                input.port.unwrap_or(u32::from(DEFAULT_RDP_PORT)) as i64,
+                bool_to_i64(input.fullscreen),
+                bool_to_i64(input.multi_monitor),
+                input.width.map(|value| value as i64),
+                input.height.map(|value| value as i64),
+                input.color_depth.map(|value| value as i64),
+                now,
+            ],
+        )
+        .map_err(to_error)?;
+
+        get_rdp_settings_by_server(&conn, server_id)?
+            .ok_or_else(|| "Saved RDP settings were not found".to_string())
+    }
+
+    pub fn delete_rdp_settings(&self, server_id: &str) -> AppResult<()> {
+        let conn = self.lock()?;
+        ensure_server_exists(&conn, server_id)?;
+        conn.execute(
+            "DELETE FROM server_rdp_settings WHERE server_profile_id = ?1",
+            params![server_id],
+        )
+        .map_err(to_error)?;
+        Ok(())
+    }
+
     #[cfg(test)]
     pub fn table_exists(&self, table_name: &str) -> AppResult<bool> {
         let conn = self.lock()?;
@@ -1023,6 +1093,24 @@ fn get_tunnel_by_id(conn: &Connection, id: &str) -> AppResult<Option<Tunnel>> {
     .map_err(to_error)
 }
 
+fn get_rdp_settings_by_server(
+    conn: &Connection,
+    server_id: &str,
+) -> AppResult<Option<RdpSettings>> {
+    conn.query_row(
+        "
+        SELECT server_profile_id, enabled, username, domain, port, fullscreen, multi_monitor,
+               width, height, color_depth, created_at, updated_at
+        FROM server_rdp_settings
+        WHERE server_profile_id = ?1
+        ",
+        params![server_id],
+        rdp_settings_from_row,
+    )
+    .optional()
+    .map_err(to_error)
+}
+
 fn web_link_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<WebLink> {
     Ok(WebLink {
         id: row.get(0)?,
@@ -1046,6 +1134,23 @@ fn tunnel_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Tunnel> {
         remote_port: row.get::<_, Option<i64>>(7)?.map(|port| port as u16),
         created_at: row.get(8)?,
         updated_at: row.get(9)?,
+    })
+}
+
+fn rdp_settings_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RdpSettings> {
+    Ok(RdpSettings {
+        server_profile_id: row.get(0)?,
+        enabled: row.get::<_, i64>(1)? == 1,
+        username: row.get(2)?,
+        domain: row.get(3)?,
+        port: row.get::<_, i64>(4)? as u16,
+        fullscreen: row.get::<_, i64>(5)? == 1,
+        multi_monitor: row.get::<_, i64>(6)? == 1,
+        width: row.get::<_, Option<i64>>(7)?.map(|value| value as u16),
+        height: row.get::<_, Option<i64>>(8)?.map(|value| value as u16),
+        color_depth: row.get::<_, Option<i64>>(9)?.map(|value| value as u16),
+        created_at: row.get(10)?,
+        updated_at: row.get(11)?,
     })
 }
 
@@ -1085,7 +1190,8 @@ fn to_error(error: rusqlite::Error) -> String {
 mod tests {
     use super::*;
     use crate::domain::{
-        AppSettings, GroupInput, ServerInput, SshKeyInput, TunnelInput, WebLinkInput,
+        AppSettings, GroupInput, RdpSettingsInput, ServerInput, SshKeyInput, TunnelInput,
+        WebLinkInput,
     };
 
     fn test_db() -> Database {
@@ -1124,6 +1230,7 @@ mod tests {
             "app_settings",
             "server_web_links",
             "server_tunnels",
+            "server_rdp_settings",
         ] {
             assert!(db.table_exists(table).unwrap(), "{table} should exist");
         }
@@ -1229,6 +1336,20 @@ mod tests {
         }
     }
 
+    fn rdp_settings_input() -> RdpSettingsInput {
+        RdpSettingsInput {
+            enabled: true,
+            username: Some("labuser".to_string()),
+            domain: Some("LAB".to_string()),
+            port: Some(3390),
+            fullscreen: false,
+            multi_monitor: true,
+            width: Some(1920),
+            height: Some(1080),
+            color_depth: Some(32),
+        }
+    }
+
     #[test]
     fn tunnel_crud_round_trip() {
         let db = test_db();
@@ -1261,6 +1382,49 @@ mod tests {
     }
 
     #[test]
+    fn rdp_settings_round_trip() {
+        let db = test_db();
+        let server = db.create_server(server_input()).unwrap();
+        assert!(db.get_rdp_settings(&server.id).unwrap().is_none());
+
+        let created = db
+            .save_rdp_settings(&server.id, rdp_settings_input())
+            .unwrap();
+        assert!(created.enabled);
+        assert_eq!(created.username.as_deref(), Some("labuser"));
+        assert_eq!(created.domain.as_deref(), Some("LAB"));
+        assert_eq!(created.port, 3390);
+        assert!(created.multi_monitor);
+        assert_eq!(created.width, Some(1920));
+        assert_eq!(created.height, Some(1080));
+        assert_eq!(created.color_depth, Some(32));
+
+        let updated = db
+            .save_rdp_settings(
+                &server.id,
+                RdpSettingsInput {
+                    enabled: false,
+                    username: None,
+                    domain: None,
+                    port: None,
+                    fullscreen: true,
+                    multi_monitor: false,
+                    width: None,
+                    height: None,
+                    color_depth: Some(24),
+                },
+            )
+            .unwrap();
+        assert!(!updated.enabled);
+        assert_eq!(updated.port, 3389);
+        assert!(updated.fullscreen);
+        assert_eq!(updated.color_depth, Some(24));
+
+        db.delete_rdp_settings(&server.id).unwrap();
+        assert!(db.get_rdp_settings(&server.id).unwrap().is_none());
+    }
+
+    #[test]
     fn rejects_invalid_tunnels() {
         let db = test_db();
         let server = db.create_server(server_input()).unwrap();
@@ -1277,6 +1441,34 @@ mod tests {
         assert_eq!(
             db.create_tunnel(&server.id, input).unwrap_err(),
             "Remote port must be between 1 and 65535"
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_rdp_settings() {
+        let db = test_db();
+        let server = db.create_server(server_input()).unwrap();
+
+        let mut input = rdp_settings_input();
+        input.port = Some(0);
+        assert_eq!(
+            db.save_rdp_settings(&server.id, input).unwrap_err(),
+            "RDP port must be between 1 and 65535"
+        );
+
+        let mut input = rdp_settings_input();
+        input.width = Some(1920);
+        input.height = None;
+        assert_eq!(
+            db.save_rdp_settings(&server.id, input).unwrap_err(),
+            "RDP width and height must be set together"
+        );
+
+        let mut input = rdp_settings_input();
+        input.color_depth = Some(8);
+        assert_eq!(
+            db.save_rdp_settings(&server.id, input).unwrap_err(),
+            "RDP color depth must be 16, 24, or 32"
         );
     }
 
@@ -1348,6 +1540,25 @@ mod tests {
             .query_row(
                 "SELECT COUNT(*) FROM server_tunnels WHERE id = ?1",
                 params![tunnel.id],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn deleting_server_cascades_rdp_settings() {
+        let db = test_db();
+        let server = db.create_server(server_input()).unwrap();
+        db.save_rdp_settings(&server.id, rdp_settings_input())
+            .unwrap();
+
+        db.delete_server(&server.id).unwrap();
+        let conn = db.lock().unwrap();
+        let count = conn
+            .query_row(
+                "SELECT COUNT(*) FROM server_rdp_settings WHERE server_profile_id = ?1",
+                params![server.id],
                 |row| row.get::<_, i64>(0),
             )
             .unwrap();

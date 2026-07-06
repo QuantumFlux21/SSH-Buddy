@@ -7,6 +7,7 @@ import {
   Folder,
   FolderOpen,
   KeyRound,
+  Monitor,
   Pencil,
   Plus,
   Search,
@@ -23,6 +24,14 @@ import { api } from "./lib/api";
 import { filterServers, groupName } from "./lib/filters";
 import { serverDestination, shortDate } from "./lib/format";
 import { formatImportPreviewSummary, formatImportResult } from "./lib/importSummary";
+import {
+  hasRdpFormErrors,
+  newRdpSettingsDraft,
+  rdpSettingsSummary,
+  toRdpSettingsInput,
+  validateRdpSettingsForm,
+  type RdpSettingsFormModel,
+} from "./lib/rdp";
 import {
   hasServerFormErrors,
   newServerDraft,
@@ -53,6 +62,7 @@ import type {
   GroupInput,
   ImportCandidate,
   ImportResult,
+  RdpSettings,
   ServerProfile,
   SshKeyInput,
   SshKeyRef,
@@ -75,6 +85,9 @@ export default function App() {
   const [tunnels, setTunnels] = useState<Tunnel[]>([]);
   const [tunnelsLoading, setTunnelsLoading] = useState(false);
   const [editingTunnel, setEditingTunnel] = useState<TunnelFormModel | null>(null);
+  const [rdpSettings, setRdpSettings] = useState<RdpSettings | null>(null);
+  const [rdpLoading, setRdpLoading] = useState(false);
+  const [editingRdpSettings, setEditingRdpSettings] = useState<RdpSettingsFormModel | null>(null);
   const [serverPendingDelete, setServerPendingDelete] = useState<ServerProfile | null>(null);
   const [showImport, setShowImport] = useState(false);
   const [busyMessage, setBusyMessage] = useState<string | null>(null);
@@ -134,20 +147,26 @@ export default function App() {
       setTunnels([]);
       setEditingTunnel(null);
       setTunnelsLoading(false);
+      setRdpSettings(null);
+      setEditingRdpSettings(null);
+      setRdpLoading(false);
       return;
     }
 
     let cancelled = false;
     setWebLinksLoading(true);
     setTunnelsLoading(true);
+    setRdpLoading(true);
     setEditingWebLink(null);
     setEditingTunnel(null);
+    setEditingRdpSettings(null);
 
-    Promise.all([api.listWebLinks(selectedServer.id), api.listTunnels(selectedServer.id)])
-      .then(([links, nextTunnels]) => {
+    Promise.all([api.listWebLinks(selectedServer.id), api.listTunnels(selectedServer.id), api.getRdpSettings(selectedServer.id)])
+      .then(([links, nextTunnels, nextRdpSettings]) => {
         if (!cancelled) {
           setWebLinks(links);
           setTunnels(nextTunnels);
+          setRdpSettings(nextRdpSettings);
         }
       })
       .catch((cause: unknown) => {
@@ -159,6 +178,7 @@ export default function App() {
         if (!cancelled) {
           setWebLinksLoading(false);
           setTunnelsLoading(false);
+          setRdpLoading(false);
         }
       });
 
@@ -283,6 +303,11 @@ export default function App() {
     setTunnels(nextTunnels);
   }
 
+  async function refreshRdpSettings(serverId: string) {
+    const nextSettings = await api.getRdpSettings(serverId);
+    setRdpSettings(nextSettings);
+  }
+
   async function saveWebLink(server: ServerProfile, form: WebLinkFormModel) {
     const errors = validateWebLinkForm(form);
     if (hasWebLinkFormErrors(errors)) {
@@ -371,6 +396,58 @@ export default function App() {
         await api.launchTunnel(server.id, tunnel.id);
       },
       "Tunnel launch requested in your external terminal.",
+    );
+  }
+
+  async function saveRdpSettings(server: ServerProfile, form: RdpSettingsFormModel) {
+    const errors = validateRdpSettingsForm(form);
+    if (hasRdpFormErrors(errors)) {
+      setStatusMessage(null);
+      setError(Object.values(errors).find(Boolean) ?? "Fix the highlighted RDP fields.");
+      return;
+    }
+
+    await runAction(
+      "Saving RDP settings",
+      async () => {
+        await api.saveRdpSettings(server.id, toRdpSettingsInput(form));
+        setEditingRdpSettings(null);
+        await refreshRdpSettings(server.id);
+      },
+      "RDP settings saved.",
+    );
+  }
+
+  async function resetRdpSettings(server: ServerProfile) {
+    await runAction(
+      "Resetting RDP settings",
+      async () => {
+        await api.deleteRdpSettings(server.id);
+        setEditingRdpSettings(null);
+        await refreshRdpSettings(server.id);
+      },
+      "RDP settings reset.",
+    );
+  }
+
+  async function copyRdpCommand(server: ServerProfile) {
+    await runAction(
+      "Copying RDP command",
+      async () => {
+        const command = await api.getRdpCommand(server.id);
+        await navigator.clipboard.writeText(command);
+      },
+      "RDP command copied to clipboard.",
+    );
+  }
+
+  async function launchRdp(server: ServerProfile) {
+    await runAction(
+      "Launching RDP",
+      async () => {
+        await api.launchRdp(server.id);
+      },
+      "RDP launch requested.",
     );
   }
 
@@ -523,6 +600,15 @@ export default function App() {
             onDeleteTunnel={deleteTunnel}
             onCopyTunnelCommand={copyTunnelCommand}
             onLaunchTunnel={launchTunnel}
+            rdpSettings={rdpSettings}
+            rdpLoading={rdpLoading}
+            editingRdpSettings={editingRdpSettings}
+            onConfigureRdp={() => setEditingRdpSettings(newRdpSettingsDraft(rdpSettings))}
+            onCancelRdp={() => setEditingRdpSettings(null)}
+            onSaveRdp={saveRdpSettings}
+            onResetRdp={resetRdpSettings}
+            onCopyRdpCommand={copyRdpCommand}
+            onLaunchRdp={launchRdp}
             keyRefs={snapshot.sshKeys}
             hasAnyServers={hasAnyServers}
             hasActiveServerFilter={hasActiveServerFilter}
@@ -705,6 +791,15 @@ function ServerDetails({
   onDeleteTunnel,
   onCopyTunnelCommand,
   onLaunchTunnel,
+  rdpSettings,
+  rdpLoading,
+  editingRdpSettings,
+  onConfigureRdp,
+  onCancelRdp,
+  onSaveRdp,
+  onResetRdp,
+  onCopyRdpCommand,
+  onLaunchRdp,
   hasAnyServers,
   hasActiveServerFilter,
   onAddServer,
@@ -741,6 +836,15 @@ function ServerDetails({
   onDeleteTunnel: (server: ServerProfile, tunnel: Tunnel) => void;
   onCopyTunnelCommand: (server: ServerProfile, tunnel: Tunnel) => void;
   onLaunchTunnel: (server: ServerProfile, tunnel: Tunnel) => void;
+  rdpSettings: RdpSettings | null;
+  rdpLoading: boolean;
+  editingRdpSettings: RdpSettingsFormModel | null;
+  onConfigureRdp: () => void;
+  onCancelRdp: () => void;
+  onSaveRdp: (server: ServerProfile, form: RdpSettingsFormModel) => void;
+  onResetRdp: (server: ServerProfile) => void;
+  onCopyRdpCommand: (server: ServerProfile) => void;
+  onLaunchRdp: (server: ServerProfile) => void;
   hasAnyServers: boolean;
   hasActiveServerFilter: boolean;
   onAddServer: () => void;
@@ -859,6 +963,20 @@ function ServerDetails({
           onLaunch={onLaunchTunnel}
         />
 
+        <RdpPanel
+          server={server}
+          settings={rdpSettings}
+          loading={rdpLoading}
+          editingSettings={editingRdpSettings}
+          busy={busy}
+          onConfigure={onConfigureRdp}
+          onCancel={onCancelRdp}
+          onSave={onSaveRdp}
+          onReset={onResetRdp}
+          onCopyCommand={onCopyRdpCommand}
+          onLaunch={onLaunchRdp}
+        />
+
         <WebLinksPanel
           server={server}
           links={webLinks}
@@ -901,7 +1019,7 @@ function ServerDetails({
           <div className="planned-list">
             <span>Embedded terminal</span>
             <span>SFTP file browser</span>
-            <span>RDP</span>
+            <span>VNC</span>
           </div>
           <p className="muted">These are intentionally disabled until their backend behavior is implemented.</p>
         </section>
@@ -916,6 +1034,235 @@ function Info({ label, value }: { label: string; value: string }) {
       <span>{label}</span>
       <strong>{value}</strong>
     </div>
+  );
+}
+
+function RdpPanel({
+  server,
+  settings,
+  loading,
+  editingSettings,
+  busy,
+  onConfigure,
+  onCancel,
+  onSave,
+  onReset,
+  onCopyCommand,
+  onLaunch,
+}: {
+  server: ServerProfile;
+  settings: RdpSettings | null;
+  loading: boolean;
+  editingSettings: RdpSettingsFormModel | null;
+  busy: boolean;
+  onConfigure: () => void;
+  onCancel: () => void;
+  onSave: (server: ServerProfile, form: RdpSettingsFormModel) => void;
+  onReset: (server: ServerProfile) => void;
+  onCopyCommand: (server: ServerProfile) => void;
+  onLaunch: (server: ServerProfile) => void;
+}) {
+  const canLaunch = Boolean(settings?.enabled);
+
+  return (
+    <section className="panel">
+      <div className="panel-heading">
+        <div>
+          <h3>RDP</h3>
+          <span>FreeRDP external launch</span>
+        </div>
+        <button className="button compact" type="button" disabled={busy || Boolean(editingSettings)} onClick={onConfigure}>
+          <Pencil size={15} />
+          {settings ? "Edit RDP" : "Configure RDP"}
+        </button>
+      </div>
+
+      <p className="field-hint">SSH-Buddy does not store RDP passwords. FreeRDP will prompt if credentials are needed.</p>
+
+      {editingSettings ? <RdpSettingsForm form={editingSettings} busy={busy} onCancel={onCancel} onSave={(form) => onSave(server, form)} /> : null}
+
+      {loading ? <p className="muted">Loading RDP settings...</p> : null}
+
+      {!loading && !settings && !editingSettings ? (
+        <div className="empty-inline">
+          <Monitor size={30} />
+          <strong>No RDP profile yet</strong>
+          <span>Configure FreeRDP launch options for this server without storing passwords.</span>
+        </div>
+      ) : null}
+
+      {settings && !editingSettings ? (
+        <div className="web-link-list">
+          <div className="web-link-row">
+            <Monitor size={18} />
+            <div>
+              <strong>{settings.enabled ? "RDP enabled" : "RDP disabled"}</strong>
+              <span>
+                {settings.username ? `${settings.username}${settings.domain ? ` @ ${settings.domain}` : ""}` : "FreeRDP will prompt for username"} ·{" "}
+                port {settings.port} · {rdpSettingsSummary(settings)}
+              </span>
+            </div>
+            <div className="row-actions">
+              <button className="button compact" type="button" disabled={busy || !canLaunch} onClick={() => onLaunch(server)}>
+                <Monitor size={15} />
+                Open
+              </button>
+              <button className="button compact" type="button" disabled={busy || !canLaunch} onClick={() => onCopyCommand(server)}>
+                <Copy size={15} />
+                Copy
+              </button>
+              <button className="icon-button danger" type="button" aria-label="Reset RDP settings" disabled={busy} onClick={() => onReset(server)}>
+                <Trash2 size={16} />
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function RdpSettingsForm({
+  form,
+  busy,
+  onCancel,
+  onSave,
+}: {
+  form: RdpSettingsFormModel;
+  busy: boolean;
+  onCancel: () => void;
+  onSave: (form: RdpSettingsFormModel) => void;
+}) {
+  const [draft, setDraft] = useState(form);
+  const [submitted, setSubmitted] = useState(false);
+  const errors = validateRdpSettingsForm(draft);
+
+  useEffect(() => {
+    setDraft(form);
+    setSubmitted(false);
+  }, [form]);
+
+  const update = <Key extends keyof RdpSettingsFormModel>(key: Key, value: RdpSettingsFormModel[Key]) => {
+    setDraft({ ...draft, [key]: value });
+  };
+
+  return (
+    <form
+      className="web-link-form"
+      noValidate
+      onSubmit={(event) => {
+        event.preventDefault();
+        setSubmitted(true);
+        if (hasRdpFormErrors(errors)) {
+          return;
+        }
+        onSave(draft);
+      }}
+    >
+      <div className="form-grid">
+        <label className="span-2 checkbox-field">
+          <input type="checkbox" checked={draft.enabled} onChange={(event) => update("enabled", event.target.checked)} />
+          Enable RDP actions for this server
+        </label>
+        <label>
+          Username
+          <input value={draft.username} onChange={(event) => update("username", event.target.value)} placeholder="optional" />
+        </label>
+        <label>
+          Domain
+          <input value={draft.domain} onChange={(event) => update("domain", event.target.value)} placeholder="optional" />
+        </label>
+        <label>
+          Port
+          <input
+            type="number"
+            min={1}
+            max={65535}
+            value={draft.port}
+            onChange={(event) => update("port", event.target.value)}
+            aria-invalid={submitted && Boolean(errors.port)}
+            aria-describedby={submitted && errors.port ? "rdp-port-error" : undefined}
+          />
+          {submitted && errors.port ? (
+            <span className="field-error" id="rdp-port-error">
+              {errors.port}
+            </span>
+          ) : null}
+        </label>
+        <label>
+          Color depth
+          <select
+            value={draft.colorDepth}
+            onChange={(event) => update("colorDepth", event.target.value as RdpSettingsFormModel["colorDepth"])}
+            aria-invalid={submitted && Boolean(errors.colorDepth)}
+            aria-describedby={submitted && errors.colorDepth ? "rdp-color-depth-error" : undefined}
+          >
+            <option value="">Default</option>
+            <option value="16">16 bpp</option>
+            <option value="24">24 bpp</option>
+            <option value="32">32 bpp</option>
+          </select>
+          {submitted && errors.colorDepth ? (
+            <span className="field-error" id="rdp-color-depth-error">
+              {errors.colorDepth}
+            </span>
+          ) : null}
+        </label>
+        <label>
+          Width
+          <input
+            type="number"
+            min={320}
+            max={16384}
+            value={draft.width}
+            onChange={(event) => update("width", event.target.value)}
+            placeholder="optional"
+            aria-invalid={submitted && Boolean(errors.width)}
+            aria-describedby={submitted && errors.width ? "rdp-width-error" : undefined}
+          />
+          {submitted && errors.width ? (
+            <span className="field-error" id="rdp-width-error">
+              {errors.width}
+            </span>
+          ) : null}
+        </label>
+        <label>
+          Height
+          <input
+            type="number"
+            min={320}
+            max={16384}
+            value={draft.height}
+            onChange={(event) => update("height", event.target.value)}
+            placeholder="optional"
+            aria-invalid={submitted && Boolean(errors.height)}
+            aria-describedby={submitted && errors.height ? "rdp-height-error" : undefined}
+          />
+          {submitted && errors.height ? (
+            <span className="field-error" id="rdp-height-error">
+              {errors.height}
+            </span>
+          ) : null}
+        </label>
+        <label className="checkbox-field">
+          <input type="checkbox" checked={draft.fullscreen} onChange={(event) => update("fullscreen", event.target.checked)} />
+          Fullscreen
+        </label>
+        <label className="checkbox-field">
+          <input type="checkbox" checked={draft.multiMonitor} onChange={(event) => update("multiMonitor", event.target.checked)} />
+          Multi-monitor
+        </label>
+      </div>
+      <p className="field-hint">No password field is provided. FreeRDP prompts interactively when credentials are needed.</p>
+      <div className="modal-actions">
+        <button type="button" className="button ghost" disabled={busy} onClick={onCancel}>
+          Cancel
+        </button>
+        <button type="submit" className="button primary" disabled={busy}>
+          Save RDP settings
+        </button>
+      </div>
+    </form>
   );
 }
 

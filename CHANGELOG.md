@@ -10,12 +10,19 @@ All notable changes to SSH-Buddy will be documented in this file.
 - Copyable SFTP command generation from saved server profile data.
 - SFTP support for username, host, port, identity file references, and ProxyJump.
 - Backend tests for SFTP argv construction, command formatting, custom port handling, identity file handling, ProxyJump handling, and launch preflight errors.
+- Per-server RDP settings for FreeRDP external launch.
+- RDP command generation and launch through `xfreerdp3` or `xfreerdp`.
+- RDP options for username, domain, port, fullscreen, multi-monitor, dimensions, and color depth.
+- Backend and frontend tests for RDP settings validation, command construction, client detection, and password-free launch behavior.
 
 ### Security
 
 - SFTP launch uses backend-owned argv/process APIs with no shell interpolation.
 - SFTP passwords and private key contents remain out of app storage.
 - ProxyJump for SFTP is passed as `-o ProxyJump=...` for OpenSSH compatibility.
+- RDP launch uses backend-owned argv/process APIs with no shell interpolation.
+- RDP passwords are not stored or passed to FreeRDP.
+- Arbitrary FreeRDP option strings are not supported in this milestone.
 
 ## 0.2.0 - 2026-07-06
 

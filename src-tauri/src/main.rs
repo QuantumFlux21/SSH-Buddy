@@ -10,11 +10,12 @@ use std::{fs, io};
 
 use commands::{
     create_group, create_server, create_ssh_key_ref, create_tunnel, create_web_link, delete_group,
-    delete_server, delete_ssh_key_ref, delete_tunnel, delete_web_link, get_app_state,
-    get_sftp_command, get_ssh_command, get_tunnel_command, import_ssh_config,
-    import_ssh_config_preview, launch_sftp, launch_ssh, launch_tunnel, list_groups, list_servers,
-    list_ssh_key_refs, list_tunnels, list_web_links, open_web_link, save_settings, update_server,
-    update_tunnel, update_web_link,
+    delete_rdp_settings, delete_server, delete_ssh_key_ref, delete_tunnel, delete_web_link,
+    get_app_state, get_rdp_command, get_rdp_settings, get_sftp_command, get_ssh_command,
+    get_tunnel_command, import_ssh_config, import_ssh_config_preview, launch_rdp, launch_sftp,
+    launch_ssh, launch_tunnel, list_groups, list_servers, list_ssh_key_refs, list_tunnels,
+    list_web_links, open_web_link, save_rdp_settings, save_settings, update_server, update_tunnel,
+    update_web_link,
 };
 use db::Database;
 use tauri::Manager;
@@ -52,6 +53,11 @@ fn main() {
             launch_ssh,
             get_sftp_command,
             launch_sftp,
+            get_rdp_settings,
+            save_rdp_settings,
+            delete_rdp_settings,
+            get_rdp_command,
+            launch_rdp,
             list_tunnels,
             create_tunnel,
             update_tunnel,

@@ -719,6 +719,17 @@ input[type="color"] {
   padding: 3px;
 }
 
+.checkbox-field {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 42px;
+}
+
+.checkbox-field input {
+  width: auto;
+}
+
 .check-row {
   display: flex;
   align-items: center;

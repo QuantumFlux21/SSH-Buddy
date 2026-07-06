@@ -5,12 +5,13 @@ use crate::{
     db::Database,
     domain::{
         AppResult, AppSettings, AppStateSnapshot, Group, GroupInput, ImportCandidate, ImportResult,
-        ServerInput, ServerProfile, SshKeyInput, SshKeyRef, Tunnel, TunnelInput, WebLink,
-        WebLinkInput,
+        RdpSettings, RdpSettingsInput, ServerInput, ServerProfile, SshKeyInput, SshKeyRef, Tunnel,
+        TunnelInput, WebLink, WebLinkInput,
     },
     launcher::{
-        build_sftp_argv, build_ssh_argv, build_tunnel_argv, format_argv_for_display,
-        launch_sftp_in_terminal, launch_ssh_in_terminal, launch_tunnel_in_terminal,
+        build_rdp_launch_command, build_sftp_argv, build_ssh_argv, build_tunnel_argv,
+        format_argv_for_display, launch_rdp as launch_rdp_client, launch_sftp_in_terminal,
+        launch_ssh_in_terminal, launch_tunnel_in_terminal,
     },
 };
 
@@ -126,6 +127,54 @@ pub fn launch_sftp(server_id: String, db: State<'_, Database>) -> AppResult<()> 
     let settings = db.get_settings()?;
 
     launch_sftp_in_terminal(&server, identity_file.as_deref(), &settings)
+}
+
+#[tauri::command]
+pub fn get_rdp_settings(
+    server_id: String,
+    db: State<'_, Database>,
+) -> AppResult<Option<RdpSettings>> {
+    db.get_rdp_settings(&server_id)
+}
+
+#[tauri::command]
+pub fn save_rdp_settings(
+    server_id: String,
+    input: RdpSettingsInput,
+    db: State<'_, Database>,
+) -> AppResult<RdpSettings> {
+    db.save_rdp_settings(&server_id, input)
+}
+
+#[tauri::command]
+pub fn delete_rdp_settings(server_id: String, db: State<'_, Database>) -> AppResult<()> {
+    db.delete_rdp_settings(&server_id)
+}
+
+#[tauri::command]
+pub fn get_rdp_command(server_id: String, db: State<'_, Database>) -> AppResult<String> {
+    let server = db
+        .get_server(&server_id)?
+        .ok_or_else(|| "Server not found".to_string())?;
+    let settings = db
+        .get_rdp_settings(&server_id)?
+        .ok_or_else(|| "RDP is not configured for this server".to_string())?;
+    let command = build_rdp_launch_command(&server, &settings, crate::launcher::command_in_path)?;
+    let mut argv = vec![command.program];
+    argv.extend(command.args);
+    Ok(format_argv_for_display(&argv))
+}
+
+#[tauri::command]
+pub fn launch_rdp(server_id: String, db: State<'_, Database>) -> AppResult<()> {
+    let server = db
+        .get_server(&server_id)?
+        .ok_or_else(|| "Server not found".to_string())?;
+    let settings = db
+        .get_rdp_settings(&server_id)?
+        .ok_or_else(|| "RDP is not configured for this server".to_string())?;
+
+    launch_rdp_client(&server, &settings)
 }
 
 #[tauri::command]

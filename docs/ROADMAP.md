@@ -71,6 +71,18 @@ Status: complete for the next release.
 - Use `-P <port>` for SFTP ports and `-o ProxyJump=<value>` for bastion compatibility.
 - Keep FTP, FTPS, password storage, and embedded file browsing out of scope.
 
+## RDP External Launch
+
+Status: complete for the next release.
+
+- Store optional RDP settings per server profile.
+- Detect FreeRDP clients in order: `xfreerdp3`, then `xfreerdp`.
+- Launch RDP externally through argv/process APIs.
+- Copy RDP command behavior.
+- Support username, domain, port, fullscreen, multi-monitor, dimensions, and color depth.
+- Never store or pass RDP passwords.
+- Keep embedded RDP and arbitrary FreeRDP option strings out of scope.
+
 ## SSH Tunnels / Port Forwarding
 
 Status: local forwarding complete for v0.2.0.
@@ -98,7 +110,7 @@ Status: complete for v0.2.0; release hardening continues.
 
 - Keep command execution backend-owned and narrowly scoped.
 - Keep SSH private keys, passphrases, SSH passwords, sudo passwords, and remote passwords out of app storage.
-- Use argv/process APIs instead of shell interpolation for SSH, SFTP, and tunnel launch.
+- Use argv/process APIs instead of shell interpolation for SSH, SFTP, RDP, and tunnel launch.
 - Keep sudo/root automation out of scope.
 - Validate ProxyJump and tunnel values before save and before launch.
 - Continue expanding tests around validation, command generation, import, and persistence.
@@ -127,7 +139,7 @@ Status: ready pending final version bump, release workflow run, and release smok
 ## Post-MVP
 
 - Embedded SFTP browser.
-- RDP launch through `xfreerdp`.
+- Embedded RDP.
 - Remote tunnel forwarding with `-R`.
 - SOCKS tunnel forwarding with `-D`.
 - Embedded terminal tabs.

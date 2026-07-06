@@ -45,6 +45,21 @@ export interface Tunnel {
   updatedAt: string;
 }
 
+export interface RdpSettings {
+  serverProfileId: string;
+  enabled: boolean;
+  username: string | null;
+  domain: string | null;
+  port: number;
+  fullscreen: boolean;
+  multiMonitor: boolean;
+  width: number | null;
+  height: number | null;
+  colorDepth: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ServerProfile {
   id: string;
   displayName: string;
@@ -111,6 +126,18 @@ export interface TunnelInput {
   localPort?: number | null;
   remoteHost?: string | null;
   remotePort?: number | null;
+}
+
+export interface RdpSettingsInput {
+  enabled: boolean;
+  username?: string | null;
+  domain?: string | null;
+  port?: number | null;
+  fullscreen: boolean;
+  multiMonitor: boolean;
+  width?: number | null;
+  height?: number | null;
+  colorDepth?: number | null;
 }
 
 export interface ImportCandidate {

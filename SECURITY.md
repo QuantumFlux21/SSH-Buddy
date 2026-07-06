@@ -15,8 +15,9 @@ Open a private security advisory on GitHub when the repository is public. Until 
 - Do not store private key contents in the app database.
 - Do not store SSH passphrases or SSH passwords.
 - Do not store sudo passwords.
-- Do not inject passwords into SSH, sudo, or remote shells.
-- Do not store FTP, RDP, or other remote-access passwords by default if those integrations are added later.
+- Do not store RDP passwords.
+- Do not inject passwords into SSH, sudo, RDP, or remote shells.
+- Do not store FTP, RDP, or other remote-access passwords.
 - Keep command execution narrowly scoped and backend-owned.
 - Warn before risky features such as agent forwarding, root login, password storage, or automatic privileged commands.
 
@@ -31,11 +32,12 @@ SSH-Buddy must not automate sudo by storing or injecting sudo passwords. Normal 
 ## Current Release Guarantees
 
 - SSH launch uses the system `ssh` binary and argv/process APIs.
-- SSH, SFTP, and tunnel launch use argv/process APIs and do not pass commands through a shell.
+- SSH, SFTP, RDP, and tunnel launch use argv/process APIs and do not pass commands through a shell.
 - SSH config import reads `~/.ssh/config` but does not create, edit, or overwrite it.
 - Import stores explicit `IdentityFile` paths as key references only.
 - ProxyJump values are stored as local metadata and passed to OpenSSH with `-J` after validation.
 - SFTP launch uses the system OpenSSH `sftp` client and passes ProxyJump with `-o ProxyJump=...` for compatibility.
+- RDP launch uses `xfreerdp3` or `xfreerdp` and never includes `/p:` password arguments.
 - Local SSH tunnels are launched with OpenSSH `-N -L` after validating bind host, remote host, and ports.
 - Web/admin links must be `http://` or `https://` and must not contain embedded credentials.
 - Notes are plaintext local metadata and should not contain secrets.
@@ -50,17 +52,24 @@ SSH tunnel support is limited to local forwarding for now. Tunnel launch uses `s
 
 SFTP support delegates file-transfer behavior to the system OpenSSH `sftp` client in an external terminal. SSH-Buddy builds argv values from saved profile metadata only. It does not store SFTP passwords, read private key contents, or inject credentials. Any passphrase, password, or host-key prompt remains part of the normal OpenSSH terminal flow.
 
+## RDP Safety
+
+RDP support delegates remote desktop behavior to FreeRDP through `xfreerdp3` or `xfreerdp`. SSH-Buddy stores only launch metadata such as username, domain, port, display mode, dimensions, and color depth. It does not store RDP passwords and does not pass `/p:` arguments. FreeRDP prompts interactively when credentials are required.
+
+RDP settings are separate from SSH/SFTP assumptions. SSH keys, ssh-agent, ProxyJump, and sudo/root workflows do not authenticate RDP.
+
 ## Local Metadata Storage
 
-SSH-Buddy stores local app metadata in `ssh-buddy.sqlite3` under the Tauri app data directory for the app identifier `io.github.quantumflux21.ssh-buddy`. This database is not an encrypted secret store. Delete the app data directory to reset local profiles, groups, tags, key references, ProxyJump values, tunnel profiles, web links, notes, and settings.
+SSH-Buddy stores local app metadata in `ssh-buddy.sqlite3` under the Tauri app data directory for the app identifier `io.github.quantumflux21.ssh-buddy`. This database is not an encrypted secret store. Delete the app data directory to reset local profiles, groups, tags, key references, ProxyJump values, tunnel profiles, RDP settings, web links, notes, and settings.
 
 ## What SSH-Buddy Does Not Do
 
 - Does not store private key contents.
 - Does not store SSH passwords or passphrases.
 - Does not store SFTP passwords.
+- Does not store RDP passwords.
 - Does not store sudo passwords.
 - Does not inject passwords into SSH, sudo, remote shells, RDP, FTP, or web URLs.
 - Does not automate root login or privileged command execution.
 - Does not enable agent forwarding by default.
-- Does not implement FTP, FTPS, RDP, remote forwarding, SOCKS tunnels, embedded SFTP file browsing, embedded terminal sessions, sync, or KeePassXC integration.
+- Does not implement FTP, FTPS, remote forwarding, SOCKS tunnels, embedded SFTP/RDP experiences, embedded terminal sessions, sync, or KeePassXC integration.

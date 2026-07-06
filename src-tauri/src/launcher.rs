@@ -8,7 +8,8 @@ use std::{
 
 use crate::domain::{
     normalize_tunnel_bind_host, validate_proxy_jump, validate_tunnel_input, AppResult, AppSettings,
-    ServerProfile, Tunnel, TunnelInput, SUPPORTED_TERMINAL_PREFERENCES, TERMINAL_PREFERENCE_AUTO,
+    RdpSettings, ServerProfile, Tunnel, TunnelInput, SUPPORTED_TERMINAL_PREFERENCES,
+    TERMINAL_PREFERENCE_AUTO,
 };
 
 const TERMINAL_ORDER: &[&str] = &[
@@ -19,6 +20,7 @@ const TERMINAL_ORDER: &[&str] = &[
     "gnome-terminal",
     "xterm",
 ];
+const RDP_CLIENT_ORDER: &[&str] = &["xfreerdp3", "xfreerdp"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProcessCommand {
@@ -53,6 +55,51 @@ pub fn build_sftp_argv(
     Ok(argv)
 }
 
+pub fn build_rdp_argv(
+    client: &str,
+    server: &ServerProfile,
+    settings: &RdpSettings,
+) -> AppResult<Vec<String>> {
+    validate_rdp_client(client)?;
+    validate_server_profile_for_launch(server)?;
+    validate_rdp_settings_for_launch(settings)?;
+
+    let host = server.host.trim();
+    validate_rdp_host(host)?;
+
+    let mut argv = vec![client.to_string(), format!("/v:{host}:{}", settings.port)];
+
+    if let Some(username) = settings.username.as_deref().and_then(normalize_optional) {
+        argv.push(format!("/u:{username}"));
+    }
+
+    if let Some(domain) = settings.domain.as_deref().and_then(normalize_optional) {
+        argv.push(format!("/d:{domain}"));
+    }
+
+    if settings.fullscreen {
+        argv.push("/f".to_string());
+    }
+
+    if settings.multi_monitor {
+        argv.push("/multimon".to_string());
+    }
+
+    if let Some(width) = settings.width {
+        argv.push(format!("/w:{width}"));
+    }
+
+    if let Some(height) = settings.height {
+        argv.push(format!("/h:{height}"));
+    }
+
+    if let Some(color_depth) = settings.color_depth {
+        argv.push(format!("/bpp:{color_depth}"));
+    }
+
+    Ok(argv)
+}
+
 pub fn build_tunnel_argv(
     server: &ServerProfile,
     identity_file: Option<&str>,
@@ -83,6 +130,74 @@ fn validate_server_profile_for_launch(server: &ServerProfile) -> AppResult<()> {
     }
 
     Ok(())
+}
+
+fn validate_rdp_settings_for_launch(settings: &RdpSettings) -> AppResult<()> {
+    if !settings.enabled {
+        return Err("RDP is not enabled for this server".to_string());
+    }
+
+    if settings.port == 0 {
+        return Err("RDP port must be between 1 and 65535".to_string());
+    }
+
+    match (settings.width, settings.height) {
+        (None, None) => {}
+        (Some(width), Some(height)) => {
+            validate_rdp_dimension_for_launch(width, "RDP width")?;
+            validate_rdp_dimension_for_launch(height, "RDP height")?;
+        }
+        _ => return Err("RDP width and height must be set together".to_string()),
+    }
+
+    if let Some(color_depth) = settings.color_depth {
+        if !matches!(color_depth, 16 | 24 | 32) {
+            return Err("RDP color depth must be 16, 24, or 32".to_string());
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_rdp_dimension_for_launch(value: u16, label: &str) -> AppResult<()> {
+    if (320..=16_384).contains(&value) {
+        Ok(())
+    } else {
+        Err(format!("{label} must be between 320 and 16384"))
+    }
+}
+
+fn validate_rdp_host(host: &str) -> AppResult<()> {
+    if host.chars().any(char::is_whitespace) {
+        return Err("RDP host must not contain whitespace".to_string());
+    }
+
+    if host.starts_with('-') {
+        return Err("RDP host must not start with '-'".to_string());
+    }
+
+    if host
+        .chars()
+        .any(|character| !is_rdp_host_character_allowed(character))
+    {
+        return Err(
+            "RDP host contains unsupported characters. Use a hostname or IP address.".to_string(),
+        );
+    }
+
+    Ok(())
+}
+
+fn is_rdp_host_character_allowed(character: char) -> bool {
+    character.is_ascii_alphanumeric() || "._-:[]".contains(character)
+}
+
+fn validate_rdp_client(client: &str) -> AppResult<()> {
+    if RDP_CLIENT_ORDER.contains(&client) {
+        Ok(())
+    } else {
+        Err("Unsupported RDP client".to_string())
+    }
 }
 
 fn append_profile_ssh_options(
@@ -258,6 +373,18 @@ pub fn launch_sftp_in_terminal(
     Ok(())
 }
 
+pub fn launch_rdp(server: &ServerProfile, settings: &RdpSettings) -> AppResult<()> {
+    let command = build_rdp_launch_command(server, settings, command_in_path)?;
+    let program = command.program.clone();
+
+    Command::new(&command.program)
+        .args(&command.args)
+        .spawn()
+        .map_err(|error| format!("Failed to launch {program}: {error}"))?;
+
+    Ok(())
+}
+
 pub fn launch_tunnel_in_terminal(
     server: &ServerProfile,
     identity_file: Option<&str>,
@@ -322,6 +449,35 @@ where
     terminal_command_for(&terminal, &sftp_argv)
 }
 
+pub fn select_rdp_client<F>(available: F) -> AppResult<String>
+where
+    F: Fn(&str) -> bool,
+{
+    RDP_CLIENT_ORDER
+        .iter()
+        .find(|client| available(client))
+        .map(|client| (*client).to_string())
+        .ok_or_else(|| {
+            "No supported RDP client found. Install FreeRDP xfreerdp3 or xfreerdp.".to_string()
+        })
+}
+
+pub fn build_rdp_launch_command<F>(
+    server: &ServerProfile,
+    settings: &RdpSettings,
+    available: F,
+) -> AppResult<ProcessCommand>
+where
+    F: Fn(&str) -> bool,
+{
+    let client = select_rdp_client(available)?;
+    let argv = build_rdp_argv(&client, server, settings)?;
+    let mut args = argv;
+    let program = args.remove(0);
+
+    Ok(ProcessCommand { program, args })
+}
+
 pub fn build_tunnel_launch_command<F>(
     server: &ServerProfile,
     identity_file: Option<&str>,
@@ -346,7 +502,7 @@ where
     terminal_command_for(&terminal, &ssh_argv)
 }
 
-fn command_in_path(command: &str) -> bool {
+pub(crate) fn command_in_path(command: &str) -> bool {
     let Some(path_var) = env::var_os("PATH") else {
         return false;
     };
@@ -493,6 +649,23 @@ mod tests {
         }
     }
 
+    fn sample_rdp_settings() -> RdpSettings {
+        RdpSettings {
+            server_profile_id: "srv".to_string(),
+            enabled: true,
+            username: Some("rdpuser".to_string()),
+            domain: Some("LAB".to_string()),
+            port: 3390,
+            fullscreen: false,
+            multi_monitor: true,
+            width: Some(1920),
+            height: Some(1080),
+            color_depth: Some(32),
+            created_at: "2026-01-01T00:00:00.000Z".to_string(),
+            updated_at: "2026-01-01T00:00:00.000Z".to_string(),
+        }
+    }
+
     #[test]
     fn builds_ssh_argv_with_profile_fields() {
         let argv = build_ssh_argv(&sample_server(), Some("/home/user/.ssh/id_ed25519")).unwrap();
@@ -579,6 +752,43 @@ mod tests {
     }
 
     #[test]
+    fn builds_rdp_argv_with_profile_fields() {
+        let argv = build_rdp_argv("xfreerdp3", &sample_server(), &sample_rdp_settings()).unwrap();
+
+        assert_eq!(
+            argv,
+            vec![
+                "xfreerdp3",
+                "/v:nas.local:3390",
+                "/u:rdpuser",
+                "/d:LAB",
+                "/multimon",
+                "/w:1920",
+                "/h:1080",
+                "/bpp:32"
+            ]
+        );
+        assert!(!argv.iter().any(|arg| arg.starts_with("/p:")));
+    }
+
+    #[test]
+    fn builds_rdp_argv_with_fullscreen_and_without_username() {
+        let mut settings = sample_rdp_settings();
+        settings.username = None;
+        settings.domain = None;
+        settings.port = 3389;
+        settings.fullscreen = true;
+        settings.multi_monitor = false;
+        settings.width = None;
+        settings.height = None;
+        settings.color_depth = None;
+
+        let argv = build_rdp_argv("xfreerdp", &sample_server(), &settings).unwrap();
+
+        assert_eq!(argv, vec!["xfreerdp", "/v:nas.local:3389", "/f"]);
+    }
+
+    #[test]
     fn builds_tunnel_argv_with_local_forward() {
         let argv = build_tunnel_argv(&sample_server(), None, &sample_tunnel()).unwrap();
 
@@ -627,6 +837,21 @@ mod tests {
     }
 
     #[test]
+    fn formats_rdp_command_with_quoting() {
+        let mut settings = sample_rdp_settings();
+        settings.username = Some("Lab User".to_string());
+
+        let command = format_argv_for_display(
+            &build_rdp_argv("xfreerdp3", &sample_server(), &settings).unwrap(),
+        );
+
+        assert_eq!(
+            command,
+            "xfreerdp3 /v:nas.local:3390 '/u:Lab User' /d:LAB /multimon /w:1920 /h:1080 /bpp:32"
+        );
+    }
+
+    #[test]
     fn rejects_incomplete_server_profiles() {
         let mut server = sample_server();
         server.host = " ".to_string();
@@ -647,6 +872,37 @@ mod tests {
         assert_eq!(
             build_ssh_argv(&server, None).unwrap_err(),
             "ProxyJump contains unsupported characters. Use OpenSSH host specs like user@bastion:22."
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_rdp_settings_for_launch() {
+        let mut settings = sample_rdp_settings();
+        settings.enabled = false;
+        assert_eq!(
+            build_rdp_argv("xfreerdp3", &sample_server(), &settings).unwrap_err(),
+            "RDP is not enabled for this server"
+        );
+
+        let mut settings = sample_rdp_settings();
+        settings.port = 0;
+        assert_eq!(
+            build_rdp_argv("xfreerdp3", &sample_server(), &settings).unwrap_err(),
+            "RDP port must be between 1 and 65535"
+        );
+
+        let mut settings = sample_rdp_settings();
+        settings.height = None;
+        assert_eq!(
+            build_rdp_argv("xfreerdp3", &sample_server(), &settings).unwrap_err(),
+            "RDP width and height must be set together"
+        );
+
+        let mut settings = sample_rdp_settings();
+        settings.color_depth = Some(8);
+        assert_eq!(
+            build_rdp_argv("xfreerdp3", &sample_server(), &settings).unwrap_err(),
+            "RDP color depth must be 16, 24, or 32"
         );
     }
 
@@ -720,6 +976,22 @@ mod tests {
     }
 
     #[test]
+    fn selects_rdp_client_in_preferred_order() {
+        let client =
+            select_rdp_client(|candidate| candidate == "xfreerdp3" || candidate == "xfreerdp")
+                .unwrap();
+        assert_eq!(client, "xfreerdp3");
+
+        let client = select_rdp_client(|candidate| candidate == "xfreerdp").unwrap();
+        assert_eq!(client, "xfreerdp");
+
+        assert_eq!(
+            select_rdp_client(|_| false).unwrap_err(),
+            "No supported RDP client found. Install FreeRDP xfreerdp3 or xfreerdp."
+        );
+    }
+
+    #[test]
     fn launch_preflight_requires_ssh_binary() {
         assert_eq!(
             build_launch_command(&sample_server(), None, &sample_settings(), |_| false)
@@ -771,6 +1043,20 @@ mod tests {
         .unwrap_err();
 
         assert!(error.contains("Selected SSH key file was not found"));
+    }
+
+    #[test]
+    fn rdp_launch_preflight_builds_process_command() {
+        let command =
+            build_rdp_launch_command(&sample_server(), &sample_rdp_settings(), |candidate| {
+                candidate == "xfreerdp"
+            })
+            .unwrap();
+
+        assert_eq!(command.program, "xfreerdp");
+        assert_eq!(command.args[0], "/v:nas.local:3390");
+        assert!(command.args.contains(&"/u:rdpuser".to_string()));
+        assert!(!command.args.iter().any(|arg| arg.starts_with("/p:")));
     }
 
     #[test]
