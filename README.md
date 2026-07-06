@@ -12,9 +12,11 @@ The core MVP is implemented:
 - `~/.ssh/config` import preview and selected import.
 - External terminal SSH launch through system OpenSSH.
 - Copyable SSH command generation.
+- ProxyJump/bastion support through OpenSSH `-J`.
+- Saved local SSH tunnel profiles with copy and external-terminal launch actions.
 - Linux-first development flow, with CachyOS/KDE as the primary target environment.
 
-The project is pre-1.0. `v0.1.0` is the first public GitHub release; a `v0.1.1` release should stay limited to bug fixes, documentation, and packaging corrections unless a new milestone is approved.
+The project is pre-1.0. `v0.1.0` is the first public GitHub release, and `v0.2.0` is the ProxyJump and local tunnel feature release.
 
 ## Stack
 
@@ -30,7 +32,7 @@ The project is pre-1.0. `v0.1.0` is the first public GitHub release; a `v0.1.1` 
 - Does not automate sudo/root escalation.
 - Does not implement SSH cryptography itself.
 - Does not edit `~/.ssh/config`; import is preview-first and read-only.
-- Does not implement SFTP, RDP, VNC, tunnels, embedded terminals, sync, or KeePassXC integration yet.
+- Does not implement SFTP, RDP, VNC, remote forwarding, SOCKS tunnels, embedded terminals, sync, or KeePassXC integration yet.
 - Does not promise one universal release file for every operating system.
 
 ## Install From GitHub Releases
@@ -42,24 +44,26 @@ https://github.com/QuantumFlux21/SSH-Buddy/releases
 For Linux, download the AppImage, make it executable, and run it:
 
 ```sh
-chmod +x SSH-Buddy-v0.1.0-linux-amd64.AppImage
-./SSH-Buddy-v0.1.0-linux-amd64.AppImage
+chmod +x SSH-Buddy-v0.2.0-linux-amd64.AppImage
+./SSH-Buddy-v0.2.0-linux-amd64.AppImage
 ```
+
+Replace `v0.2.0` with the version you downloaded if you are installing a different release.
 
 The Linux AppImage expects the OpenSSH client and at least one supported external terminal in `PATH`: Konsole, kitty, Alacritty, WezTerm, GNOME Terminal, or xterm. Some distributions may also require AppImage/FUSE compatibility packages.
 
 On some Wayland/WebKitGTK sessions, use the DMA-BUF workaround:
 
 ```sh
-WEBKIT_DISABLE_DMABUF_RENDERER=1 ./SSH-Buddy-v0.1.0-linux-amd64.AppImage
+WEBKIT_DISABLE_DMABUF_RENDERER=1 ./SSH-Buddy-v0.2.0-linux-amd64.AppImage
 ```
 
-For Windows, download the NSIS installer named like `SSH-Buddy-v0.1.0-windows-x64-setup.exe`.
+For Windows, download the NSIS installer named like `SSH-Buddy-v0.2.0-windows-x64-setup.exe`.
 
 For macOS, download the `.dmg` that matches your CPU:
 
-- Apple Silicon: `SSH-Buddy-v0.1.0-darwin-aarch64.dmg`
-- Intel: `SSH-Buddy-v0.1.0-darwin-x64.dmg`
+- Apple Silicon: `SSH-Buddy-v0.2.0-darwin-aarch64.dmg`
+- Intel: `SSH-Buddy-v0.2.0-darwin-x64.dmg`
 
 Windows and macOS builds are currently unsigned. Windows SmartScreen, macOS Gatekeeper, and browser download warnings may appear. Proper Windows code signing and macOS signing/notarization are future release-hardening work.
 
@@ -129,7 +133,7 @@ cargo test
 
 ## Local Data and Reset
 
-SSH-Buddy stores local metadata in a SQLite database named `ssh-buddy.sqlite3` in the Tauri app data directory. The database stores profiles, groups, tags, SSH key path references, web links, notes, and settings. It does not store private key contents or passwords.
+SSH-Buddy stores local metadata in a SQLite database named `ssh-buddy.sqlite3` in the Tauri app data directory. The database stores profiles, groups, tags, SSH key path references, ProxyJump values, tunnel profiles, web links, notes, and settings. It does not store private key contents or passwords.
 
 Typical locations are:
 
@@ -139,13 +143,27 @@ Typical locations are:
 
 To reset local app data, close SSH-Buddy and delete the database file or the app data directory above. This removes SSH-Buddy's local metadata only; it does not delete SSH keys, edit `~/.ssh/config`, change `ssh-agent`, or touch remote servers.
 
+## ProxyJump and Bastions
+
+Server profiles can store an optional ProxyJump value. SSH-Buddy passes that value to OpenSSH as `-J` when launching SSH sessions or tunnel sessions. Supported examples include `bastion`, `user@bastion`, `user@bastion:22`, and comma-separated jump chains accepted by OpenSSH.
+
+The SSH config import preview preserves detected `ProxyJump` values when selected candidates are imported. The preview still warns when a profile will use ProxyJump so the launch behavior is visible before import.
+
+SSH-Buddy does not enable agent forwarding, store jump host passwords, or automate root/sudo workflows.
+
+## SSH Tunnels
+
+SSH-Buddy supports saved local forwarding profiles per server. A tunnel profile stores a label, local bind host, local port, remote host, and remote port. The launch action runs OpenSSH in an external terminal using `ssh -N -L ...` and the selected server profile options, including port, identity file, and ProxyJump.
+
+Tunnel sessions stay open only while the external terminal process is running. The default local bind host is `127.0.0.1`. Remote forwarding with `-R` and SOCKS forwarding with `-D` are not part of v0.2.0.
+
 ## Security Model
 
 SSH-Buddy uses system OpenSSH and existing SSH keys. It stores key labels, key paths, optional fingerprints, and profile metadata only. Private key contents stay in user-controlled OpenSSH files, the OS, `ssh-agent`, or another user-controlled tool.
 
 Normal terminal prompts remain the default for SSH passphrases, host key confirmation, passwords, and `sudo`. Automatic password injection and privileged command automation are intentionally out of scope.
 
-Process execution is backend-owned. SSH launch builds argv arrays and launches a supported terminal without shell string interpolation. Web links are opened through the OS/browser opener after backend URL validation.
+Process execution is backend-owned. SSH and tunnel launch build argv arrays and launch a supported terminal without shell string interpolation. ProxyJump and tunnel values are validated before use. Web links are opened through the OS/browser opener after backend URL validation.
 
 ## Release Artifacts
 
@@ -161,7 +179,7 @@ Windows and macOS pre-release builds are unsigned. Windows SmartScreen, macOS Ga
 
 ## Maintainer Release Process
 
-1. Confirm the version is `0.1.0` in `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json`.
+1. For the v0.2.0 release, bump the version to `0.2.0` in `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json`. The release workflow artifact names use the app version, so do not tag `v0.2.0` while these files still say `0.1.0`.
 2. Run local checks:
 
 ```sh
@@ -176,8 +194,8 @@ cargo test
 4. Push the tag:
 
 ```sh
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
 5. Review the draft GitHub release generated by `.github/workflows/release.yml`.

@@ -601,6 +601,32 @@ mod tests {
     }
 
     #[test]
+    fn tunnel_launch_preflight_reports_missing_ssh_and_terminal() {
+        assert_eq!(
+            build_tunnel_launch_command(
+                &sample_server(),
+                None,
+                &sample_tunnel(),
+                &sample_settings(),
+                |_| false
+            )
+            .unwrap_err(),
+            "OpenSSH client 'ssh' was not found in PATH. Install OpenSSH and try again."
+        );
+
+        let error = build_tunnel_launch_command(
+            &sample_server(),
+            None,
+            &sample_tunnel(),
+            &sample_settings(),
+            |command| command == "ssh",
+        )
+        .unwrap_err();
+
+        assert!(error.contains("No supported terminal found"));
+    }
+
+    #[test]
     fn launch_preflight_rejects_missing_identity_file() {
         let error = build_launch_command(
             &sample_server(),

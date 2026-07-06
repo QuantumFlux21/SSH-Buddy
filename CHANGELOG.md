@@ -4,16 +4,36 @@ All notable changes to SSH-Buddy will be documented in this file.
 
 ## Unreleased
 
+No changes beyond the v0.2.0 release candidate yet.
+
+## 0.2.0 - Unreleased
+
+ProxyJump and local SSH tunnel feature release.
+
+### Added
+
+- ProxyJump/bastion support on server profiles with OpenSSH-compatible validation.
+- SSH launch support for ProxyJump through `ssh -J`.
+- SSH config import now preserves detected `ProxyJump` values for selected imports.
+- Saved local SSH tunnel profiles per server.
+- Tunnel command generation and copy behavior using `ssh -N -L`.
+- External-terminal tunnel launch through the existing safe terminal launcher.
+- Backend and frontend tests for ProxyJump, tunnel validation, tunnel command construction, persistence, and import behavior.
+- v0.2.0 release notes.
+
 ### Documentation
 
 - Add post-release install instructions for GitHub Releases, Linux AppImage execution, Wayland/WebKit troubleshooting, and local app data reset.
 - Clarify where SSH-Buddy stores its local SQLite database.
-- Update release-readiness notes for v0.1.1 bugfix preparation.
+- Update release-readiness notes for v0.2.0 feature release preparation.
 - Document the local rolling-release Linux AppImage packaging caveat.
+- Document ProxyJump and local tunnel usage.
+- Document ProxyJump and tunnel security boundaries.
 
 ### Changed
 
 - Make the release workflow draft text generic for future `v*` tags instead of hardcoding v0.1.0 wording.
+- Keep remote forwarding `-R`, SOCKS forwarding `-D`, SFTP, RDP, embedded terminal, sync, password storage, and KeePassXC out of scope.
 
 ## 0.1.0 - 2026-07-06
 

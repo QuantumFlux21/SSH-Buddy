@@ -16,7 +16,7 @@ Status: complete.
 
 - App-owned SQLite database in the Tauri app data directory.
 - Migrations tracked through `schema_migrations`.
-- Persisted server profiles, groups, tags, SSH key references, web links, and settings.
+- Persisted server profiles, groups, tags, SSH key references, ProxyJump values, tunnel profiles, web links, and settings.
 - Private keys and passwords stay out of the database.
 
 ## Server CRUD
@@ -37,6 +37,17 @@ Status: complete.
 - Duplicate detection.
 - Selected import only.
 - Explicit `IdentityFile` values become key path references, not key contents.
+- Detected `ProxyJump` values are preserved during selected import.
+
+## ProxyJump / Bastion Support
+
+Status: complete for v0.2.0.
+
+- Store optional OpenSSH-compatible `ProxyJump` values on server profiles.
+- Validate ProxyJump host specs before save and launch.
+- Include `-J <proxy_jump>` in SSH and tunnel argv construction.
+- Preserve detected ProxyJump values from `~/.ssh/config` import.
+- Keep agent forwarding and password storage out of scope.
 
 ## External Terminal Launch
 
@@ -46,7 +57,20 @@ Status: complete.
 - Launch supported Linux terminals: Konsole, kitty, Alacritty, WezTerm, GNOME Terminal, and xterm.
 - Preferred terminal setting with auto-detect.
 - Copy-command behavior.
+- ProxyJump-aware launch behavior.
 - Preflight errors for missing OpenSSH, missing supported terminal, and missing selected key files.
+
+## SSH Tunnels / Port Forwarding
+
+Status: local forwarding complete for v0.2.0.
+
+- Store saved local tunnel profiles per server.
+- Launch tunnels with system OpenSSH in an external terminal using `ssh -N -L`.
+- Include server profile options such as port, identity file, and ProxyJump.
+- Copy tunnel command behavior.
+- Validate tunnel labels, host fields, bind hosts, and ports before launch.
+- Cascade-delete tunnel profiles when their server profile is deleted.
+- Remote forwarding `-R` and SOCKS forwarding `-D` remain post-MVP.
 
 ## Web Admin Links
 
@@ -59,12 +83,13 @@ Status: complete.
 
 ## Security Hardening
 
-Status: in progress.
+Status: complete for v0.2.0; release hardening continues.
 
 - Keep command execution backend-owned and narrowly scoped.
 - Keep SSH private keys, passphrases, SSH passwords, sudo passwords, and remote passwords out of app storage.
-- Use argv/process APIs instead of shell interpolation for SSH launch.
+- Use argv/process APIs instead of shell interpolation for SSH and tunnel launch.
 - Keep sudo/root automation out of scope.
+- Validate ProxyJump and tunnel values before save and before launch.
 - Continue expanding tests around validation, command generation, import, and persistence.
 
 ## Release Packaging
@@ -78,21 +103,22 @@ Status: complete for v0.1.0; release hardening continues.
 - Do not promise a single universal file across all operating systems.
 - One app, one codebase, multiple release files.
 
-## v0.1.1 Bugfix Candidates
+## v0.2.0 Release Readiness
 
-Status: post-release validation.
+Status: ready pending final version bump, release workflow run, and release smoke test.
 
-- Keep the scope limited to bug fixes, documentation, and packaging corrections.
-- Validate GitHub release metadata, including whether releases should be marked as pre-releases.
+- Validate ProxyJump and tunnel end-to-end flows.
+- Validate GitHub release metadata and keep v0.2.0 marked as a pre-release if appropriate.
 - Smoke-test the Linux AppImage on CachyOS/KDE Wayland.
 - Track local rolling-release AppImage packaging failures separately from CI release packaging.
-- Improve install, troubleshooting, and local data reset documentation as issues are discovered.
+- Bump package/app versions to `0.2.0` only in the final release-prep commit before tagging.
 
 ## Post-MVP
 
 - SFTP browser or external SFTP launch.
 - RDP launch through `xfreerdp`.
-- SSH tunnels and port forwarding.
+- Remote tunnel forwarding with `-R`.
+- SOCKS tunnel forwarding with `-D`.
 - Embedded terminal tabs.
 - SCP upload/download helper.
 - VNC launch.
