@@ -18,7 +18,7 @@ The core MVP is implemented:
 - Saved local SSH tunnel profiles with copy and external-terminal launch actions.
 - Linux-first development flow, with CachyOS/KDE as the primary target environment.
 
-The project is pre-1.0. `v0.1.0` is the first public GitHub release, `v0.2.0` is the ProxyJump and local tunnel feature release, and `v0.3.0` is planned as the SFTP and RDP external launcher feature release.
+The project is pre-1.0. `v0.1.0` is the first public GitHub release, `v0.2.0` is the ProxyJump and local tunnel feature release, and `v0.3.0` is the SFTP and RDP external launcher feature release.
 
 ## Stack
 
@@ -46,26 +46,26 @@ https://github.com/QuantumFlux21/SSH-Buddy/releases
 For Linux, download the AppImage, make it executable, and run it:
 
 ```sh
-chmod +x SSH-Buddy-v0.2.0-linux-amd64.AppImage
-./SSH-Buddy-v0.2.0-linux-amd64.AppImage
+chmod +x SSH-Buddy-v0.3.0-linux-amd64.AppImage
+./SSH-Buddy-v0.3.0-linux-amd64.AppImage
 ```
 
-Replace `v0.2.0` with the version you downloaded if you are installing a different release.
+Replace `v0.3.0` with the version you downloaded if you are installing a different release.
 
 The Linux AppImage expects the OpenSSH client and at least one supported external terminal in `PATH`: Konsole, kitty, Alacritty, WezTerm, GNOME Terminal, or xterm. Some distributions may also require AppImage/FUSE compatibility packages.
 
 On some Wayland/WebKitGTK sessions, use the DMA-BUF workaround:
 
 ```sh
-WEBKIT_DISABLE_DMABUF_RENDERER=1 ./SSH-Buddy-v0.2.0-linux-amd64.AppImage
+WEBKIT_DISABLE_DMABUF_RENDERER=1 ./SSH-Buddy-v0.3.0-linux-amd64.AppImage
 ```
 
-For Windows, download the NSIS installer named like `SSH-Buddy-v0.2.0-windows-x64-setup.exe`.
+For Windows, download the NSIS installer named like `SSH-Buddy-v0.3.0-windows-x64-setup.exe`.
 
 For macOS, download the `.dmg` that matches your CPU:
 
-- Apple Silicon: `SSH-Buddy-v0.2.0-darwin-aarch64.dmg`
-- Intel: `SSH-Buddy-v0.2.0-darwin-x64.dmg`
+- Apple Silicon: `SSH-Buddy-v0.3.0-darwin-aarch64.dmg`
+- Intel: `SSH-Buddy-v0.3.0-darwin-x64.dmg`
 
 Windows and macOS builds are currently unsigned. Windows SmartScreen, macOS Gatekeeper, and browser download warnings may appear. Proper Windows code signing and macOS signing/notarization are future release-hardening work.
 
@@ -194,7 +194,7 @@ Windows and macOS builds are unsigned. Windows SmartScreen, macOS Gatekeeper, an
 
 ## Maintainer Release Process
 
-1. For the v0.3.0 release, bump the version to `0.3.0` in `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json`. The release workflow artifact names use the app version, so do not tag `v0.3.0` while these files still say `0.2.0`.
+1. For the v0.3.0 release, confirm the version is `0.3.0` in `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, and `src-tauri/tauri.conf.json`. The release workflow artifact names use the app version, so do not tag `v0.3.0` while any of these files still say `0.2.0`.
 2. Run local checks:
 
 ```sh
