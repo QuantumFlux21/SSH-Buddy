@@ -7,13 +7,19 @@ use std::{
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 
 use crate::domain::{
-    new_id, normalize_notes, normalize_optional, normalize_tag_names, normalize_text,
-    now_timestamp, validate_group_input, validate_server_input, validate_ssh_key_input, AppResult,
-    Group, GroupInput, ServerInput, ServerProfile, SshKeyInput, SshKeyRef, Tag,
+    default_settings, new_id, normalize_notes, normalize_optional, normalize_tag_names,
+    normalize_text, now_timestamp, validate_app_settings, validate_group_input,
+    validate_server_input, validate_ssh_key_input, AppResult, AppSettings, Group, GroupInput,
+    ServerInput, ServerProfile, SshKeyInput, SshKeyRef, Tag,
 };
 
-const MIGRATIONS: &[(&str, &str)] =
-    &[("001_initial", include_str!("../migrations/001_initial.sql"))];
+const MIGRATIONS: &[(&str, &str)] = &[
+    ("001_initial", include_str!("../migrations/001_initial.sql")),
+    (
+        "002_app_settings",
+        include_str!("../migrations/002_app_settings.sql"),
+    ),
+];
 
 #[derive(Debug)]
 pub struct Database {
@@ -376,6 +382,66 @@ impl Database {
         collect_rows(rows)
     }
 
+    pub fn get_settings(&self) -> AppResult<AppSettings> {
+        let conn = self.lock()?;
+        let settings = conn
+            .query_row(
+                "
+                SELECT terminal_preference, safety_warnings_enabled
+                FROM app_settings
+                WHERE id = 1
+                ",
+                [],
+                |row| {
+                    Ok(AppSettings {
+                        terminal_preference: row.get(0)?,
+                        safety_warnings_enabled: row.get::<_, i64>(1)? == 1,
+                    })
+                },
+            )
+            .optional()
+            .map_err(to_error)?;
+
+        Ok(settings.unwrap_or_else(default_settings))
+    }
+
+    pub fn save_settings(&self, input: AppSettings) -> AppResult<AppSettings> {
+        validate_app_settings(&input)?;
+
+        let conn = self.lock()?;
+        let updated = conn
+            .execute(
+                "
+                UPDATE app_settings
+                SET terminal_preference = ?1,
+                    safety_warnings_enabled = ?2
+                WHERE id = 1
+                ",
+                params![
+                    &input.terminal_preference,
+                    bool_to_i64(input.safety_warnings_enabled)
+                ],
+            )
+            .map_err(to_error)?;
+
+        if updated == 0 {
+            conn.execute(
+                "
+                INSERT INTO app_settings (id, terminal_preference, safety_warnings_enabled)
+                VALUES (1, ?1, ?2)
+                ",
+                params![
+                    &input.terminal_preference,
+                    bool_to_i64(input.safety_warnings_enabled)
+                ],
+            )
+            .map_err(to_error)?;
+        }
+
+        drop(conn);
+        self.get_settings()
+    }
+
     pub fn key_path(&self, id: &str) -> AppResult<Option<String>> {
         let conn = self.lock()?;
         conn.query_row(
@@ -598,7 +664,7 @@ fn to_error(error: rusqlite::Error) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{GroupInput, ServerInput, SshKeyInput};
+    use crate::domain::{AppSettings, GroupInput, ServerInput, SshKeyInput};
 
     fn test_db() -> Database {
         let db = Database::open_in_memory().unwrap();
@@ -632,9 +698,37 @@ mod tests {
             "server_profiles",
             "tags",
             "server_profile_tags",
+            "app_settings",
         ] {
             assert!(db.table_exists(table).unwrap(), "{table} should exist");
         }
+    }
+
+    #[test]
+    fn settings_round_trip_and_reject_invalid_terminal() {
+        let db = test_db();
+        assert_eq!(db.get_settings().unwrap().terminal_preference, "auto");
+
+        let saved = db
+            .save_settings(AppSettings {
+                terminal_preference: "konsole".to_string(),
+                safety_warnings_enabled: false,
+            })
+            .unwrap();
+        assert_eq!(saved.terminal_preference, "konsole");
+        assert!(!saved.safety_warnings_enabled);
+
+        let loaded = db.get_settings().unwrap();
+        assert_eq!(loaded, saved);
+
+        assert_eq!(
+            db.save_settings(AppSettings {
+                terminal_preference: "powershell".to_string(),
+                safety_warnings_enabled: true,
+            })
+            .unwrap_err(),
+            "Unsupported terminal preference"
+        );
     }
 
     #[test]

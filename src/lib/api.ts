@@ -169,9 +169,27 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
       return structuredClone(mockState.settings) as T;
     case "get_ssh_command": {
       const server = mockState.servers.find((item) => item.id === args?.serverId);
-      return (server ? `ssh ${server.port !== 22 ? `-p ${server.port} ` : ""}${server.username ? `${server.username}@` : ""}${server.host}` : "") as T;
+      if (!server) {
+        throw new Error("Server not found");
+      }
+      const key = server.identityFileId ? mockState.sshKeys.find((item) => item.id === server.identityFileId) : null;
+      const parts = ["ssh"];
+      if (server.port !== 22) {
+        parts.push("-p", String(server.port));
+      }
+      if (key) {
+        parts.push("-i", key.path);
+      }
+      parts.push(`${server.username ? `${server.username}@` : ""}${server.host}`);
+      return parts.join(" ") as T;
     }
-    case "launch_ssh":
+    case "launch_ssh": {
+      const server = mockState.servers.find((item) => item.id === args?.serverId);
+      if (!server) {
+        throw new Error("Server not found");
+      }
+      throw new Error("SSH launch requires the Tauri desktop app");
+    }
     case "open_web_link":
       throw new Error("This feature is not implemented yet");
     case "import_ssh_config_preview":
@@ -189,22 +207,7 @@ export const api = {
       return mockCall<AppStateSnapshot>("get_app_state");
     }
 
-    const [servers, groups, sshKeys] = await Promise.all([
-      call<ServerProfile[]>("list_servers"),
-      call<Group[]>("list_groups"),
-      call<SshKeyRef[]>("list_ssh_key_refs"),
-    ]);
-
-    return {
-      servers,
-      groups,
-      sshKeys,
-      tags: Array.from(new Map(servers.flatMap((server) => server.tags).map((tag) => [tag.id, tag])).values()),
-      settings: {
-        terminalPreference: "auto",
-        safetyWarningsEnabled: true,
-      },
-    };
+    return call<AppStateSnapshot>("get_app_state");
   },
   saveServer: (id: string | null, input: ServerInput) =>
     id ? call<ServerProfile>("update_server", { id, input }) : call<ServerProfile>("create_server", { input }),

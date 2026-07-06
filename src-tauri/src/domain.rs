@@ -6,6 +6,17 @@ use uuid::Uuid;
 
 pub type AppResult<T> = Result<T, String>;
 
+pub const TERMINAL_PREFERENCE_AUTO: &str = "auto";
+pub const SUPPORTED_TERMINAL_PREFERENCES: &[&str] = &[
+    TERMINAL_PREFERENCE_AUTO,
+    "konsole",
+    "kitty",
+    "alacritty",
+    "wezterm",
+    "gnome-terminal",
+    "xterm",
+];
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Group {
@@ -124,7 +135,7 @@ pub struct ImportResult {
 
 pub fn default_settings() -> AppSettings {
     AppSettings {
-        terminal_preference: "auto".to_string(),
+        terminal_preference: TERMINAL_PREFERENCE_AUTO.to_string(),
         safety_warnings_enabled: true,
     }
 }
@@ -208,6 +219,14 @@ pub fn validate_ssh_key_input(input: &SshKeyInput) -> AppResult<()> {
 
     if normalize_text(&input.path).is_none() {
         return Err("Key path is required".to_string());
+    }
+
+    Ok(())
+}
+
+pub fn validate_app_settings(input: &AppSettings) -> AppResult<()> {
+    if !SUPPORTED_TERMINAL_PREFERENCES.contains(&input.terminal_preference.as_str()) {
+        return Err("Unsupported terminal preference".to_string());
     }
 
     Ok(())

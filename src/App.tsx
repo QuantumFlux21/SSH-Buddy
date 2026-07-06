@@ -145,6 +145,12 @@ export default function App() {
     });
   }
 
+  async function launchSsh(server: ServerProfile) {
+    await runAction("Launching SSH", async () => {
+      await api.launchSsh(server.id);
+    });
+  }
+
   async function toggleFavorite(server: ServerProfile) {
     await runAction(server.favorite ? "Removing favorite" : "Marking favorite", async () => {
       const input = serverToInput(server);
@@ -279,6 +285,7 @@ export default function App() {
             onEdit={(server) => setEditingServer(newServerDraft(server))}
             onDelete={setServerPendingDelete}
             onCopyCommand={copySshCommand}
+            onLaunch={launchSsh}
             onToggleFavorite={toggleFavorite}
             keyRefs={snapshot.sshKeys}
             hasAnyServers={hasAnyServers}
@@ -417,6 +424,7 @@ function ServerDetails({
   onEdit,
   onDelete,
   onCopyCommand,
+  onLaunch,
   onToggleFavorite,
   hasAnyServers,
   hasActiveServerFilter,
@@ -430,6 +438,7 @@ function ServerDetails({
   onEdit: (server: ServerProfile) => void;
   onDelete: (server: ServerProfile) => void;
   onCopyCommand: (server: ServerProfile) => void;
+  onLaunch: (server: ServerProfile) => void;
   onToggleFavorite: (server: ServerProfile) => void;
   hasAnyServers: boolean;
   hasActiveServerFilter: boolean;
@@ -491,10 +500,9 @@ function ServerDetails({
         </div>
 
         <div className="action-strip">
-          <button className="button primary planned-disabled" disabled title="SSH launching is coming later">
+          <button className="button primary" disabled={busy} title="Launch SSH in an external terminal" onClick={() => onLaunch(server)}>
             <Terminal size={17} />
             Open SSH
-            <span className="planned-badge">Coming later</span>
           </button>
           <button className="button" disabled={busy} onClick={() => onCopyCommand(server)}>
             <Copy size={17} />
@@ -544,7 +552,7 @@ function ServerDetails({
             <span>Later</span>
           </div>
           <div className="planned-list">
-            <span>External SSH launch</span>
+            <span>Embedded terminal</span>
             <span>Web admin links</span>
             <span>SSH config import</span>
           </div>
@@ -939,6 +947,10 @@ function SettingsPanel({
   onSave: (settings: AppSettings) => void;
 }) {
   const [draft, setDraft] = useState(settings);
+
+  useEffect(() => {
+    setDraft(settings);
+  }, [settings]);
 
   return (
     <section className="settings-grid">

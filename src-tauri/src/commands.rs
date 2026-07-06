@@ -3,9 +3,10 @@ use tauri::State;
 use crate::{
     db::Database,
     domain::{
-        default_settings, AppResult, AppSettings, AppStateSnapshot, Group, GroupInput,
-        ImportCandidate, ImportResult, ServerInput, ServerProfile, SshKeyInput, SshKeyRef,
+        AppResult, AppSettings, AppStateSnapshot, Group, GroupInput, ImportCandidate,
+        ImportResult, ServerInput, ServerProfile, SshKeyInput, SshKeyRef,
     },
+    launcher::{build_ssh_argv, format_argv_for_display, launch_ssh_in_terminal},
 };
 
 #[tauri::command]
@@ -15,7 +16,7 @@ pub fn get_app_state(db: State<'_, Database>) -> AppResult<AppStateSnapshot> {
         groups: db.list_groups()?,
         tags: db.list_tags()?,
         ssh_keys: db.list_ssh_key_refs()?,
-        settings: default_settings(),
+        settings: db.get_settings()?,
     })
 }
 
@@ -74,8 +75,8 @@ pub fn delete_ssh_key_ref(id: String, db: State<'_, Database>) -> AppResult<()> 
 }
 
 #[tauri::command]
-pub fn save_settings(_input: AppSettings) -> AppResult<AppSettings> {
-    Err("Settings persistence is not implemented yet".to_string())
+pub fn save_settings(input: AppSettings, db: State<'_, Database>) -> AppResult<AppSettings> {
+    db.save_settings(input)
 }
 
 #[tauri::command]
@@ -83,17 +84,21 @@ pub fn get_ssh_command(server_id: String, db: State<'_, Database>) -> AppResult<
     let server = db
         .get_server(&server_id)?
         .ok_or_else(|| "Server not found".to_string())?;
-    let identity_file = match &server.identity_file_id {
-        Some(id) => db.key_path(id)?,
-        None => None,
-    };
+    let identity_file = identity_file_path(&db, &server)?;
 
-    Ok(build_ssh_command(&server, identity_file.as_deref()))
+    let argv = build_ssh_argv(&server, identity_file.as_deref())?;
+    Ok(format_argv_for_display(&argv))
 }
 
 #[tauri::command]
-pub fn launch_ssh(_server_id: String) -> AppResult<()> {
-    Err("SSH launching is not implemented yet".to_string())
+pub fn launch_ssh(server_id: String, db: State<'_, Database>) -> AppResult<()> {
+    let server = db
+        .get_server(&server_id)?
+        .ok_or_else(|| "Server not found".to_string())?;
+    let identity_file = identity_file_path(&db, &server)?;
+    let settings = db.get_settings()?;
+
+    launch_ssh_in_terminal(&server, identity_file.as_deref(), &settings)
 }
 
 #[tauri::command]
@@ -111,32 +116,12 @@ pub fn import_ssh_config(_aliases: Vec<String>) -> AppResult<ImportResult> {
     Err("SSH config import is not implemented yet".to_string())
 }
 
-fn build_ssh_command(server: &ServerProfile, identity_file: Option<&str>) -> String {
-    let mut parts = vec!["ssh".to_string()];
-    if server.port != 22 {
-        parts.push("-p".to_string());
-        parts.push(server.port.to_string());
-    }
-    if let Some(identity_file) = identity_file {
-        parts.push("-i".to_string());
-        parts.push(shell_quote(identity_file));
-    }
-    let destination = if server.username.trim().is_empty() {
-        server.host.clone()
-    } else {
-        format!("{}@{}", server.username, server.host)
-    };
-    parts.push(shell_quote(&destination));
-    parts.join(" ")
-}
-
-fn shell_quote(value: &str) -> String {
-    if value
-        .chars()
-        .all(|character| character.is_ascii_alphanumeric() || "@%_+=:,./-".contains(character))
-    {
-        value.to_string()
-    } else {
-        format!("'{}'", value.replace('\'', "'\\''"))
+fn identity_file_path(db: &Database, server: &ServerProfile) -> AppResult<Option<String>> {
+    match &server.identity_file_id {
+        Some(id) => db
+            .key_path(id)?
+            .map(Some)
+            .ok_or_else(|| "Selected SSH key reference was not found".to_string()),
+        None => Ok(None),
     }
 }

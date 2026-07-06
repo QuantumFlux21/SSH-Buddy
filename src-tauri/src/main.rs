@@ -3,6 +3,7 @@
 mod commands;
 mod db;
 mod domain;
+mod launcher;
 
 use std::{fs, io};
 
