@@ -202,6 +202,32 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
       }
       throw new Error("SSH launch requires the Tauri desktop app");
     }
+    case "get_sftp_command": {
+      const server = mockState.servers.find((item) => item.id === args?.serverId);
+      if (!server) {
+        throw new Error("Server not found");
+      }
+      const key = server.identityFileId ? mockState.sshKeys.find((item) => item.id === server.identityFileId) : null;
+      const parts = ["sftp"];
+      if (server.port !== 22) {
+        parts.push("-P", String(server.port));
+      }
+      if (key) {
+        parts.push("-i", key.path);
+      }
+      if (server.proxyJump) {
+        parts.push("-o", `ProxyJump=${server.proxyJump}`);
+      }
+      parts.push(`${server.username ? `${server.username}@` : ""}${server.host}`);
+      return parts.join(" ") as T;
+    }
+    case "launch_sftp": {
+      const server = mockState.servers.find((item) => item.id === args?.serverId);
+      if (!server) {
+        throw new Error("Server not found");
+      }
+      throw new Error("SFTP launch requires the Tauri desktop app");
+    }
     case "list_tunnels": {
       const serverId = args?.serverId as string;
       if (!mockState.servers.some((server) => server.id === serverId)) {
@@ -401,6 +427,8 @@ export const api = {
   saveSettings: (input: AppSettings) => call<AppSettings>("save_settings", { input }),
   getSshCommand: (serverId: string) => call<string>("get_ssh_command", { serverId }),
   launchSsh: (serverId: string) => call<void>("launch_ssh", { serverId }),
+  getSftpCommand: (serverId: string) => call<string>("get_sftp_command", { serverId }),
+  launchSftp: (serverId: string) => call<void>("launch_sftp", { serverId }),
   listTunnels: (serverId: string) => call<Tunnel[]>("list_tunnels", { serverId }),
   saveTunnel: (serverId: string, id: string | null, input: TunnelInput) =>
     id ? call<Tunnel>("update_tunnel", { id, input }) : call<Tunnel>("create_tunnel", { serverId, input }),

@@ -30,17 +30,24 @@ pub fn build_ssh_argv(
     server: &ServerProfile,
     identity_file: Option<&str>,
 ) -> AppResult<Vec<String>> {
-    if server.host.trim().is_empty() {
-        return Err("Server profile is missing a host".to_string());
-    }
-
-    if server.port == 0 {
-        return Err("Server profile port must be between 1 and 65535".to_string());
-    }
+    validate_server_profile_for_launch(server)?;
 
     let mut argv = vec!["ssh".to_string()];
     append_profile_ssh_options(&mut argv, server, identity_file)?;
 
+    argv.push(destination_for(server));
+
+    Ok(argv)
+}
+
+pub fn build_sftp_argv(
+    server: &ServerProfile,
+    identity_file: Option<&str>,
+) -> AppResult<Vec<String>> {
+    validate_server_profile_for_launch(server)?;
+
+    let mut argv = vec!["sftp".to_string()];
+    append_profile_sftp_options(&mut argv, server, identity_file)?;
     argv.push(destination_for(server));
 
     Ok(argv)
@@ -51,13 +58,7 @@ pub fn build_tunnel_argv(
     identity_file: Option<&str>,
     tunnel: &Tunnel,
 ) -> AppResult<Vec<String>> {
-    if server.host.trim().is_empty() {
-        return Err("Server profile is missing a host".to_string());
-    }
-
-    if server.port == 0 {
-        return Err("Server profile port must be between 1 and 65535".to_string());
-    }
+    validate_server_profile_for_launch(server)?;
 
     let tunnel_spec = local_tunnel_spec(tunnel)?;
     let mut argv = vec![
@@ -70,6 +71,18 @@ pub fn build_tunnel_argv(
     argv.push(destination_for(server));
 
     Ok(argv)
+}
+
+fn validate_server_profile_for_launch(server: &ServerProfile) -> AppResult<()> {
+    if server.host.trim().is_empty() {
+        return Err("Server profile is missing a host".to_string());
+    }
+
+    if server.port == 0 {
+        return Err("Server profile port must be between 1 and 65535".to_string());
+    }
+
+    Ok(())
 }
 
 fn append_profile_ssh_options(
@@ -91,6 +104,30 @@ fn append_profile_ssh_options(
         validate_proxy_jump(&proxy_jump)?;
         argv.push("-J".to_string());
         argv.push(proxy_jump);
+    }
+
+    Ok(())
+}
+
+fn append_profile_sftp_options(
+    argv: &mut Vec<String>,
+    server: &ServerProfile,
+    identity_file: Option<&str>,
+) -> AppResult<()> {
+    if server.port != 22 {
+        argv.push("-P".to_string());
+        argv.push(server.port.to_string());
+    }
+
+    if let Some(identity_file) = identity_file.and_then(normalize_optional) {
+        argv.push("-i".to_string());
+        argv.push(expand_home_path(&identity_file));
+    }
+
+    if let Some(proxy_jump) = server.proxy_jump.as_deref().and_then(normalize_optional) {
+        validate_proxy_jump(&proxy_jump)?;
+        argv.push("-o".to_string());
+        argv.push(format!("ProxyJump={proxy_jump}"));
     }
 
     Ok(())
@@ -205,6 +242,22 @@ pub fn launch_ssh_in_terminal(
     Ok(())
 }
 
+pub fn launch_sftp_in_terminal(
+    server: &ServerProfile,
+    identity_file: Option<&str>,
+    settings: &AppSettings,
+) -> AppResult<()> {
+    let command = build_sftp_launch_command(server, identity_file, settings, command_in_path)?;
+    let terminal = command.program.clone();
+
+    Command::new(&command.program)
+        .args(&command.args)
+        .spawn()
+        .map_err(|error| format!("Failed to launch {}: {error}", terminal_label(&terminal)))?;
+
+    Ok(())
+}
+
 pub fn launch_tunnel_in_terminal(
     server: &ServerProfile,
     identity_file: Option<&str>,
@@ -244,6 +297,29 @@ where
     let terminal = select_terminal(&settings.terminal_preference, available)?;
 
     terminal_command_for(&terminal, &ssh_argv)
+}
+
+pub fn build_sftp_launch_command<F>(
+    server: &ServerProfile,
+    identity_file: Option<&str>,
+    settings: &AppSettings,
+    available: F,
+) -> AppResult<ProcessCommand>
+where
+    F: Fn(&str) -> bool,
+{
+    if !available("sftp") {
+        return Err(
+            "OpenSSH SFTP client 'sftp' was not found in PATH. Install OpenSSH and try again."
+                .to_string(),
+        );
+    }
+
+    validate_identity_file_path(identity_file)?;
+    let sftp_argv = build_sftp_argv(server, identity_file)?;
+    let terminal = select_terminal(&settings.terminal_preference, available)?;
+
+    terminal_command_for(&terminal, &sftp_argv)
 }
 
 pub fn build_tunnel_launch_command<F>(
@@ -466,6 +542,43 @@ mod tests {
     }
 
     #[test]
+    fn builds_sftp_argv_with_profile_fields() {
+        let argv = build_sftp_argv(&sample_server(), Some("/home/user/.ssh/id_ed25519")).unwrap();
+
+        assert_eq!(
+            argv,
+            vec![
+                "sftp",
+                "-P",
+                "2222",
+                "-i",
+                "/home/user/.ssh/id_ed25519",
+                "admin@nas.local"
+            ]
+        );
+    }
+
+    #[test]
+    fn builds_sftp_argv_with_proxy_jump_option() {
+        let mut server = sample_server();
+        server.proxy_jump = Some("user@bastion:22,jump2".to_string());
+
+        let argv = build_sftp_argv(&server, None).unwrap();
+
+        assert_eq!(
+            argv,
+            vec![
+                "sftp",
+                "-P",
+                "2222",
+                "-o",
+                "ProxyJump=user@bastion:22,jump2",
+                "admin@nas.local"
+            ]
+        );
+    }
+
+    #[test]
     fn builds_tunnel_argv_with_local_forward() {
         let argv = build_tunnel_argv(&sample_server(), None, &sample_tunnel()).unwrap();
 
@@ -495,6 +608,21 @@ mod tests {
         assert_eq!(
             command,
             "ssh -N -L 127.0.0.1:15432:db.internal:5432 -p 2222 -i '/home/alex/.ssh/lab key' -J user@bastion:22 admin@nas.local"
+        );
+    }
+
+    #[test]
+    fn formats_sftp_command_with_identity_file_and_proxy_jump() {
+        let mut server = sample_server();
+        server.proxy_jump = Some("user@bastion:22".to_string());
+
+        let command = format_argv_for_display(
+            &build_sftp_argv(&server, Some("/home/alex/.ssh/lab key")).unwrap(),
+        );
+
+        assert_eq!(
+            command,
+            "sftp -P 2222 -i '/home/alex/.ssh/lab key' -o ProxyJump=user@bastion:22 admin@nas.local"
         );
     }
 
@@ -624,6 +752,25 @@ mod tests {
         .unwrap_err();
 
         assert!(error.contains("No supported terminal found"));
+    }
+
+    #[test]
+    fn sftp_launch_preflight_reports_missing_sftp_and_key_file() {
+        assert_eq!(
+            build_sftp_launch_command(&sample_server(), None, &sample_settings(), |_| false)
+                .unwrap_err(),
+            "OpenSSH SFTP client 'sftp' was not found in PATH. Install OpenSSH and try again."
+        );
+
+        let error = build_sftp_launch_command(
+            &sample_server(),
+            Some("/tmp/ssh-buddy-missing-test-key"),
+            &sample_settings(),
+            |command| command == "sftp" || command == "konsole",
+        )
+        .unwrap_err();
+
+        assert!(error.contains("Selected SSH key file was not found"));
     }
 
     #[test]

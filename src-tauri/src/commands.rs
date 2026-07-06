@@ -9,8 +9,8 @@ use crate::{
         WebLinkInput,
     },
     launcher::{
-        build_ssh_argv, build_tunnel_argv, format_argv_for_display, launch_ssh_in_terminal,
-        launch_tunnel_in_terminal,
+        build_sftp_argv, build_ssh_argv, build_tunnel_argv, format_argv_for_display,
+        launch_sftp_in_terminal, launch_ssh_in_terminal, launch_tunnel_in_terminal,
     },
 };
 
@@ -104,6 +104,28 @@ pub fn launch_ssh(server_id: String, db: State<'_, Database>) -> AppResult<()> {
     let settings = db.get_settings()?;
 
     launch_ssh_in_terminal(&server, identity_file.as_deref(), &settings)
+}
+
+#[tauri::command]
+pub fn get_sftp_command(server_id: String, db: State<'_, Database>) -> AppResult<String> {
+    let server = db
+        .get_server(&server_id)?
+        .ok_or_else(|| "Server not found".to_string())?;
+    let identity_file = identity_file_path(&db, &server)?;
+
+    let argv = build_sftp_argv(&server, identity_file.as_deref())?;
+    Ok(format_argv_for_display(&argv))
+}
+
+#[tauri::command]
+pub fn launch_sftp(server_id: String, db: State<'_, Database>) -> AppResult<()> {
+    let server = db
+        .get_server(&server_id)?
+        .ok_or_else(|| "Server not found".to_string())?;
+    let identity_file = identity_file_path(&db, &server)?;
+    let settings = db.get_settings()?;
+
+    launch_sftp_in_terminal(&server, identity_file.as_deref(), &settings)
 }
 
 #[tauri::command]

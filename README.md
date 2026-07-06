@@ -12,6 +12,7 @@ The core MVP is implemented:
 - `~/.ssh/config` import preview and selected import.
 - External terminal SSH launch through system OpenSSH.
 - Copyable SSH command generation.
+- External terminal SFTP launch and copyable SFTP command generation through system OpenSSH.
 - ProxyJump/bastion support through OpenSSH `-J`.
 - Saved local SSH tunnel profiles with copy and external-terminal launch actions.
 - Linux-first development flow, with CachyOS/KDE as the primary target environment.
@@ -32,7 +33,7 @@ The project is pre-1.0. `v0.1.0` is the first public GitHub release, and `v0.2.0
 - Does not automate sudo/root escalation.
 - Does not implement SSH cryptography itself.
 - Does not edit `~/.ssh/config`; import is preview-first and read-only.
-- Does not implement SFTP, RDP, VNC, remote forwarding, SOCKS tunnels, embedded terminals, sync, or KeePassXC integration yet.
+- Does not implement FTP, FTPS, RDP, VNC, remote forwarding, SOCKS tunnels, embedded SFTP file browsing, embedded terminals, sync, or KeePassXC integration yet.
 - Does not promise one universal release file for every operating system.
 
 ## Install From GitHub Releases
@@ -74,7 +75,7 @@ Prerequisites:
 - Node.js 22 or newer.
 - Rust stable and Cargo.
 - Linux packages required by Tauri/WebKitGTK for your distribution.
-- OpenSSH client.
+- OpenSSH client, including `ssh` and `sftp`.
 - At least one supported external terminal for SSH launch: Konsole, kitty, Alacritty, WezTerm, GNOME Terminal, or xterm.
 
 On CachyOS, Arch, and Arch-based KDE systems, install the current Tauri Linux prerequisites from your package manager. Package names can change, but the needed pieces are Node.js/npm, Rust/Cargo, WebKitGTK, GTK, appindicator support, librsvg, and OpenSSH.
@@ -151,6 +152,12 @@ The SSH config import preview preserves detected `ProxyJump` values when selecte
 
 SSH-Buddy does not enable agent forwarding, store jump host passwords, or automate root/sudo workflows.
 
+## SFTP External Launch
+
+SSH-Buddy can launch the system OpenSSH `sftp` client in an external terminal for a saved server profile. SFTP uses the same host, username, identity file reference, ProxyJump value, and OpenSSH/ssh-agent setup as SSH.
+
+For compatibility, SFTP commands use `-P <port>` for non-default ports, `-i <identity_file>` for selected key references, and `-o ProxyJump=<value>` for bastion hosts. SSH-Buddy does not store SFTP passwords or provide an embedded file browser yet; passphrase, password, and host-key prompts remain inside the external terminal/OpenSSH flow.
+
 ## SSH Tunnels
 
 SSH-Buddy supports saved local forwarding profiles per server. A tunnel profile stores a label, local bind host, local port, remote host, and remote port. The launch action runs OpenSSH in an external terminal using `ssh -N -L ...` and the selected server profile options, including port, identity file, and ProxyJump.
@@ -163,7 +170,7 @@ SSH-Buddy uses system OpenSSH and existing SSH keys. It stores key labels, key p
 
 Normal terminal prompts remain the default for SSH passphrases, host key confirmation, passwords, and `sudo`. Automatic password injection and privileged command automation are intentionally out of scope.
 
-Process execution is backend-owned. SSH and tunnel launch build argv arrays and launch a supported terminal without shell string interpolation. ProxyJump and tunnel values are validated before use. Web links are opened through the OS/browser opener after backend URL validation.
+Process execution is backend-owned. SSH, SFTP, and tunnel launch build argv arrays and launch a supported terminal without shell string interpolation. ProxyJump and tunnel values are validated before use. Web links are opened through the OS/browser opener after backend URL validation.
 
 ## Release Artifacts
 

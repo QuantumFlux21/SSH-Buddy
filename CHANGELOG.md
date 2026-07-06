@@ -4,9 +4,20 @@ All notable changes to SSH-Buddy will be documented in this file.
 
 ## Unreleased
 
-No changes beyond the v0.2.0 release candidate yet.
+### Added
 
-## 0.2.0 - Unreleased
+- External terminal SFTP launch using the system OpenSSH `sftp` client.
+- Copyable SFTP command generation from saved server profile data.
+- SFTP support for username, host, port, identity file references, and ProxyJump.
+- Backend tests for SFTP argv construction, command formatting, custom port handling, identity file handling, ProxyJump handling, and launch preflight errors.
+
+### Security
+
+- SFTP launch uses backend-owned argv/process APIs with no shell interpolation.
+- SFTP passwords and private key contents remain out of app storage.
+- ProxyJump for SFTP is passed as `-o ProxyJump=...` for OpenSSH compatibility.
+
+## 0.2.0 - 2026-07-06
 
 ProxyJump and local SSH tunnel feature release.
 

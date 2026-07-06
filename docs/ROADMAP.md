@@ -60,6 +60,17 @@ Status: complete.
 - ProxyJump-aware launch behavior.
 - Preflight errors for missing OpenSSH, missing supported terminal, and missing selected key files.
 
+## SFTP External Launch
+
+Status: complete for the next release.
+
+- Build OpenSSH `sftp` argv in Rust from saved server profile data.
+- Launch `sftp` in an external terminal using the existing terminal launcher.
+- Copy SFTP command behavior.
+- Include username, host, port, identity file, and ProxyJump.
+- Use `-P <port>` for SFTP ports and `-o ProxyJump=<value>` for bastion compatibility.
+- Keep FTP, FTPS, password storage, and embedded file browsing out of scope.
+
 ## SSH Tunnels / Port Forwarding
 
 Status: local forwarding complete for v0.2.0.
@@ -87,7 +98,7 @@ Status: complete for v0.2.0; release hardening continues.
 
 - Keep command execution backend-owned and narrowly scoped.
 - Keep SSH private keys, passphrases, SSH passwords, sudo passwords, and remote passwords out of app storage.
-- Use argv/process APIs instead of shell interpolation for SSH and tunnel launch.
+- Use argv/process APIs instead of shell interpolation for SSH, SFTP, and tunnel launch.
 - Keep sudo/root automation out of scope.
 - Validate ProxyJump and tunnel values before save and before launch.
 - Continue expanding tests around validation, command generation, import, and persistence.
@@ -115,7 +126,7 @@ Status: ready pending final version bump, release workflow run, and release smok
 
 ## Post-MVP
 
-- SFTP browser or external SFTP launch.
+- Embedded SFTP browser.
 - RDP launch through `xfreerdp`.
 - Remote tunnel forwarding with `-R`.
 - SOCKS tunnel forwarding with `-D`.

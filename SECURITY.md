@@ -31,10 +31,11 @@ SSH-Buddy must not automate sudo by storing or injecting sudo passwords. Normal 
 ## Current Release Guarantees
 
 - SSH launch uses the system `ssh` binary and argv/process APIs.
-- SSH and tunnel launch use argv/process APIs and do not pass commands through a shell.
+- SSH, SFTP, and tunnel launch use argv/process APIs and do not pass commands through a shell.
 - SSH config import reads `~/.ssh/config` but does not create, edit, or overwrite it.
 - Import stores explicit `IdentityFile` paths as key references only.
 - ProxyJump values are stored as local metadata and passed to OpenSSH with `-J` after validation.
+- SFTP launch uses the system OpenSSH `sftp` client and passes ProxyJump with `-o ProxyJump=...` for compatibility.
 - Local SSH tunnels are launched with OpenSSH `-N -L` after validating bind host, remote host, and ports.
 - Web/admin links must be `http://` or `https://` and must not contain embedded credentials.
 - Notes are plaintext local metadata and should not contain secrets.
@@ -45,6 +46,10 @@ ProxyJump support delegates bastion behavior to OpenSSH. SSH-Buddy stores the `P
 
 SSH tunnel support is limited to local forwarding for now. Tunnel launch uses `ssh -N -L local_bind_host:local_port:remote_host:remote_port` in an external terminal. The default local bind host is `127.0.0.1`; binding to broader interfaces can expose forwarded services to other machines and should be used only when intended.
 
+## SFTP Safety
+
+SFTP support delegates file-transfer behavior to the system OpenSSH `sftp` client in an external terminal. SSH-Buddy builds argv values from saved profile metadata only. It does not store SFTP passwords, read private key contents, or inject credentials. Any passphrase, password, or host-key prompt remains part of the normal OpenSSH terminal flow.
+
 ## Local Metadata Storage
 
 SSH-Buddy stores local app metadata in `ssh-buddy.sqlite3` under the Tauri app data directory for the app identifier `io.github.quantumflux21.ssh-buddy`. This database is not an encrypted secret store. Delete the app data directory to reset local profiles, groups, tags, key references, ProxyJump values, tunnel profiles, web links, notes, and settings.
@@ -53,8 +58,9 @@ SSH-Buddy stores local app metadata in `ssh-buddy.sqlite3` under the Tauri app d
 
 - Does not store private key contents.
 - Does not store SSH passwords or passphrases.
+- Does not store SFTP passwords.
 - Does not store sudo passwords.
 - Does not inject passwords into SSH, sudo, remote shells, RDP, FTP, or web URLs.
 - Does not automate root login or privileged command execution.
 - Does not enable agent forwarding by default.
-- Does not implement SFTP, RDP, remote forwarding, SOCKS tunnels, embedded terminal sessions, sync, or KeePassXC integration.
+- Does not implement FTP, FTPS, RDP, remote forwarding, SOCKS tunnels, embedded SFTP file browsing, embedded terminal sessions, sync, or KeePassXC integration.

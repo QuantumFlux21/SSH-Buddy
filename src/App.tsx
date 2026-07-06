@@ -240,6 +240,27 @@ export default function App() {
     );
   }
 
+  async function copySftpCommand(server: ServerProfile) {
+    await runAction(
+      "Copying SFTP command",
+      async () => {
+        const command = await api.getSftpCommand(server.id);
+        await navigator.clipboard.writeText(command);
+      },
+      "SFTP command copied to clipboard.",
+    );
+  }
+
+  async function launchSftp(server: ServerProfile) {
+    await runAction(
+      "Launching SFTP",
+      async () => {
+        await api.launchSftp(server.id);
+      },
+      "SFTP launch requested in your external terminal.",
+    );
+  }
+
   async function toggleFavorite(server: ServerProfile) {
     await runAction(
       server.favorite ? "Removing favorite" : "Marking favorite",
@@ -480,6 +501,8 @@ export default function App() {
             onDelete={setServerPendingDelete}
             onCopyCommand={copySshCommand}
             onLaunch={launchSsh}
+            onCopySftpCommand={copySftpCommand}
+            onLaunchSftp={launchSftp}
             onToggleFavorite={toggleFavorite}
             webLinks={webLinks}
             webLinksLoading={webLinksLoading}
@@ -660,6 +683,8 @@ function ServerDetails({
   onDelete,
   onCopyCommand,
   onLaunch,
+  onCopySftpCommand,
+  onLaunchSftp,
   onToggleFavorite,
   webLinks,
   webLinksLoading,
@@ -694,6 +719,8 @@ function ServerDetails({
   onDelete: (server: ServerProfile) => void;
   onCopyCommand: (server: ServerProfile) => void;
   onLaunch: (server: ServerProfile) => void;
+  onCopySftpCommand: (server: ServerProfile) => void;
+  onLaunchSftp: (server: ServerProfile) => void;
   onToggleFavorite: (server: ServerProfile) => void;
   webLinks: WebLink[];
   webLinksLoading: boolean;
@@ -787,9 +814,18 @@ function ServerDetails({
           </button>
           <button className="button" disabled={busy} onClick={() => onCopyCommand(server)}>
             <Copy size={17} />
-            Copy command
+            Copy SSH command
+          </button>
+          <button className="button" disabled={busy} title="Launch SFTP in an external terminal" onClick={() => onLaunchSftp(server)}>
+            <FolderOpen size={17} />
+            Open SFTP
+          </button>
+          <button className="button" disabled={busy} onClick={() => onCopySftpCommand(server)}>
+            <Copy size={17} />
+            Copy SFTP command
           </button>
         </div>
+        <p className="field-hint">SFTP uses system OpenSSH, the same key references, ssh-agent, ProxyJump settings, and terminal prompts as SSH.</p>
 
         <div className="info-grid">
           <Info label="Host" value={server.host} />
@@ -864,7 +900,8 @@ function ServerDetails({
           </div>
           <div className="planned-list">
             <span>Embedded terminal</span>
-            <span>SFTP/RDP</span>
+            <span>SFTP file browser</span>
+            <span>RDP</span>
           </div>
           <p className="muted">These are intentionally disabled until their backend behavior is implemented.</p>
         </section>
