@@ -12,6 +12,7 @@ import {
   Server,
   Settings,
   ShieldAlert,
+  Star,
   Tag,
   Terminal,
   Trash2,
@@ -19,63 +20,27 @@ import {
 } from "lucide-react";
 import { api } from "./lib/api";
 import { filterServers, groupName } from "./lib/filters";
-import { serverDestination, shortDate, tagInputValue } from "./lib/format";
+import { serverDestination, shortDate } from "./lib/format";
+import {
+  hasServerFormErrors,
+  newServerDraft,
+  serverToInput,
+  toServerInput,
+  validateServerForm,
+  type ServerFormModel,
+} from "./lib/serverForm";
 import type {
   AppSettings,
   AppStateSnapshot,
   Group,
   GroupInput,
   ImportCandidate,
-  ServerInput,
   ServerProfile,
   SshKeyInput,
   SshKeyRef,
 } from "./lib/types";
 
 type Section = "servers" | "groups" | "keys" | "settings";
-
-interface ServerFormModel {
-  id?: string | null;
-  displayName: string;
-  host: string;
-  port: number;
-  username: string;
-  identityFileId: string;
-  groupId: string;
-  favorite: boolean;
-  notes: string;
-  tagText: string;
-}
-
-const newServerDraft = (server?: ServerProfile | null): ServerFormModel => ({
-  id: server?.id ?? null,
-  displayName: server?.displayName ?? "",
-  host: server?.host ?? "",
-  port: server?.port ?? 22,
-  username: server?.username ?? "",
-  identityFileId: server?.identityFileId ?? "",
-  groupId: server?.groupId ?? "",
-  favorite: server?.favorite ?? false,
-  notes: server?.notes ?? "",
-  tagText: tagInputValue(server ?? null),
-});
-
-function toServerInput(form: ServerFormModel): ServerInput {
-  return {
-    displayName: form.displayName.trim(),
-    host: form.host.trim(),
-    port: Number(form.port),
-    username: form.username.trim(),
-    identityFileId: form.identityFileId || null,
-    groupId: form.groupId || null,
-    notes: form.notes.trim() || null,
-    favorite: form.favorite,
-    tagNames: form.tagText
-      .split(",")
-      .map((tag) => tag.trim())
-      .filter(Boolean),
-  };
-}
 
 export default function App() {
   const [snapshot, setSnapshot] = useState<AppStateSnapshot | null>(null);
@@ -84,6 +49,7 @@ export default function App() {
   const [groupFilter, setGroupFilter] = useState<string | null>(null);
   const [selectedServerId, setSelectedServerId] = useState<string | null>(null);
   const [editingServer, setEditingServer] = useState<ServerFormModel | null>(null);
+  const [serverPendingDelete, setServerPendingDelete] = useState<ServerProfile | null>(null);
   const [showImport, setShowImport] = useState(false);
   const [busyMessage, setBusyMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -92,11 +58,17 @@ export default function App() {
     setError(null);
     const next = await api.getAppState();
     setSnapshot(next);
-    if (nextSelectedId !== undefined) {
-      setSelectedServerId(nextSelectedId);
-    } else if (!selectedServerId && next.servers.length > 0) {
-      setSelectedServerId(next.servers[0].id);
-    }
+    setSelectedServerId((currentId) => {
+      if (nextSelectedId !== undefined) {
+        return nextSelectedId;
+      }
+
+      if (currentId && next.servers.some((server) => server.id === currentId)) {
+        return currentId;
+      }
+
+      return next.servers[0]?.id ?? null;
+    });
   }
 
   useEffect(() => {
@@ -113,17 +85,19 @@ export default function App() {
   }, [snapshot, query, groupFilter]);
 
   const selectedServer = useMemo(() => {
-    if (!snapshot) {
-      return null;
-    }
-    return snapshot.servers.find((server) => server.id === selectedServerId) ?? filteredServers[0] ?? null;
-  }, [snapshot, selectedServerId, filteredServers]);
+    return filteredServers.find((server) => server.id === selectedServerId) ?? filteredServers[0] ?? null;
+  }, [selectedServerId, filteredServers]);
 
   useEffect(() => {
-    if (!selectedServer && filteredServers.length > 0) {
+    if (filteredServers.length === 0) {
+      setSelectedServerId(null);
+      return;
+    }
+
+    if (!selectedServerId || !filteredServers.some((server) => server.id === selectedServerId)) {
       setSelectedServerId(filteredServers[0].id);
     }
-  }, [selectedServer, filteredServers]);
+  }, [filteredServers, selectedServerId]);
 
   async function runAction(label: string, action: () => Promise<void>) {
     setBusyMessage(label);
@@ -138,6 +112,12 @@ export default function App() {
   }
 
   async function saveServer(form: ServerFormModel) {
+    const errors = validateServerForm(form);
+    if (hasServerFormErrors(errors)) {
+      setError(Object.values(errors).find(Boolean) ?? "Fix the highlighted server fields.");
+      return;
+    }
+
     await runAction("Saving server", async () => {
       const server = await api.saveServer(form.id ?? null, toServerInput(form));
       setEditingServer(null);
@@ -145,15 +125,16 @@ export default function App() {
     });
   }
 
-  async function deleteServer(server: ServerProfile) {
-    const confirmed = window.confirm(`Delete ${server.displayName}? This removes local metadata only.`);
-    if (!confirmed) {
+  async function confirmDeleteServer() {
+    if (!serverPendingDelete) {
       return;
     }
 
+    const server = serverPendingDelete;
     await runAction("Deleting server", async () => {
       await api.deleteServer(server.id);
-      await loadState(null);
+      setServerPendingDelete(null);
+      await loadState();
     });
   }
 
@@ -164,10 +145,11 @@ export default function App() {
     });
   }
 
-  async function launchSsh(server: ServerProfile) {
-    await runAction("Launching terminal", async () => {
-      await api.launchSsh(server.id);
-      await loadState(server.id);
+  async function toggleFavorite(server: ServerProfile) {
+    await runAction(server.favorite ? "Removing favorite" : "Marking favorite", async () => {
+      const input = serverToInput(server);
+      const updated = await api.saveServer(server.id, { ...input, favorite: !server.favorite });
+      await loadState(updated.id);
     });
   }
 
@@ -182,6 +164,10 @@ export default function App() {
       </div>
     );
   }
+
+  const hasAnyServers = snapshot.servers.length > 0;
+  const hasActiveServerFilter = query.trim().length > 0 || groupFilter !== null;
+  const isBusy = Boolean(busyMessage);
 
   return (
     <div className="app-shell">
@@ -243,11 +229,24 @@ export default function App() {
                 setSelectedServerId(server.id);
               }}
             >
-              <span className="server-row-name">{server.displayName}</span>
+              <span className="server-row-top">
+                <span className="server-row-name">{server.displayName}</span>
+                {server.favorite ? <Star size={13} fill="currentColor" /> : null}
+              </span>
               <span className="server-row-host">{serverDestination(server)}</span>
+              <span className="server-row-tags">
+                {server.tags.slice(0, 3).map((tag) => (
+                  <span key={tag.id}>{tag.name}</span>
+                ))}
+              </span>
             </button>
           ))}
-          {filteredServers.length === 0 ? <div className="empty-mini">No matching servers</div> : null}
+          {filteredServers.length === 0 ? (
+            <div className="empty-mini">
+              <strong>{hasAnyServers ? "No matching servers" : "No servers yet"}</strong>
+              <span>{hasAnyServers ? "Try a different search or group." : "Add your first SSH profile to get started."}</span>
+            </div>
+          ) : null}
         </div>
       </aside>
 
@@ -258,11 +257,12 @@ export default function App() {
             <h1>{sectionTitle(activeSection, selectedServer)}</h1>
           </div>
           <div className="topbar-actions">
-            <button className="button ghost" disabled title="SSH config import is not implemented yet">
+            <button className="button ghost planned-disabled" disabled title="SSH config import is coming later">
               <Download size={17} />
               Import SSH config
+              <span className="planned-badge">Coming later</span>
             </button>
-            <button className="button primary" onClick={() => setEditingServer(newServerDraft())}>
+            <button className="button primary" disabled={isBusy} onClick={() => setEditingServer(newServerDraft())}>
               <Plus size={17} />
               Add server
             </button>
@@ -277,10 +277,18 @@ export default function App() {
             server={selectedServer}
             groups={snapshot.groups}
             onEdit={(server) => setEditingServer(newServerDraft(server))}
-            onDelete={deleteServer}
+            onDelete={setServerPendingDelete}
             onCopyCommand={copySshCommand}
-            onLaunch={launchSsh}
+            onToggleFavorite={toggleFavorite}
             keyRefs={snapshot.sshKeys}
+            hasAnyServers={hasAnyServers}
+            hasActiveServerFilter={hasActiveServerFilter}
+            onAddServer={() => setEditingServer(newServerDraft())}
+            onClearFilters={() => {
+              setQuery("");
+              setGroupFilter(null);
+            }}
+            busy={isBusy}
           />
         ) : null}
 
@@ -341,6 +349,7 @@ export default function App() {
           onChange={setEditingServer}
           onCancel={() => setEditingServer(null)}
           onSave={saveServer}
+          busy={isBusy}
         />
       ) : null}
 
@@ -351,6 +360,15 @@ export default function App() {
             setShowImport(false);
             await loadState(firstServerId);
           }}
+        />
+      ) : null}
+
+      {serverPendingDelete ? (
+        <DeleteServerDialog
+          server={serverPendingDelete}
+          onCancel={() => setServerPendingDelete(null)}
+          onConfirm={confirmDeleteServer}
+          busy={isBusy}
         />
       ) : null}
     </div>
@@ -399,7 +417,12 @@ function ServerDetails({
   onEdit,
   onDelete,
   onCopyCommand,
-  onLaunch,
+  onToggleFavorite,
+  hasAnyServers,
+  hasActiveServerFilter,
+  onAddServer,
+  onClearFilters,
+  busy,
 }: {
   server: ServerProfile | null;
   groups: Group[];
@@ -407,14 +430,34 @@ function ServerDetails({
   onEdit: (server: ServerProfile) => void;
   onDelete: (server: ServerProfile) => void;
   onCopyCommand: (server: ServerProfile) => void;
-  onLaunch: (server: ServerProfile) => void;
+  onToggleFavorite: (server: ServerProfile) => void;
+  hasAnyServers: boolean;
+  hasActiveServerFilter: boolean;
+  onAddServer: () => void;
+  onClearFilters: () => void;
+  busy: boolean;
 }) {
   if (!server) {
     return (
       <section className="empty-state">
         <Server size={42} />
-        <h2>No server selected</h2>
-        <p>Add a server or import entries from your OpenSSH config.</p>
+        <h2>{hasAnyServers ? "No matching servers" : "No servers yet"}</h2>
+        <p>
+          {hasAnyServers
+            ? "No saved profile matches the current search or group filter."
+            : "Create your first SSH profile. Imports and launch actions are coming later."}
+        </p>
+        <div className="empty-actions">
+          {hasActiveServerFilter ? (
+            <button className="button ghost" type="button" disabled={busy} onClick={onClearFilters}>
+              Clear filters
+            </button>
+          ) : null}
+          <button className="button primary" type="button" disabled={busy} onClick={onAddServer}>
+            <Plus size={17} />
+            Add server
+          </button>
+        </div>
       </section>
     );
   }
@@ -429,21 +472,31 @@ function ServerDetails({
             <p>{groupName(groups, server.groupId)} · Updated {shortDate(server.updatedAt)}</p>
           </div>
           <div className="hero-actions">
-            <button className="icon-button" aria-label="Edit server" title="Edit server" onClick={() => onEdit(server)}>
+            <button
+              className={server.favorite ? "icon-button favorite active" : "icon-button favorite"}
+              aria-label={server.favorite ? "Remove favorite" : "Mark as favorite"}
+              title={server.favorite ? "Remove favorite" : "Mark as favorite"}
+              disabled={busy}
+              onClick={() => onToggleFavorite(server)}
+            >
+              <Star size={18} fill={server.favorite ? "currentColor" : "none"} />
+            </button>
+            <button className="icon-button" aria-label="Edit server" title="Edit server" disabled={busy} onClick={() => onEdit(server)}>
               <Pencil size={18} />
             </button>
-            <button className="icon-button danger" aria-label="Delete server" title="Delete server" onClick={() => onDelete(server)}>
+            <button className="icon-button danger" aria-label="Delete server" title="Delete server" disabled={busy} onClick={() => onDelete(server)}>
               <Trash2 size={18} />
             </button>
           </div>
         </div>
 
         <div className="action-strip">
-          <button className="button primary" disabled title="SSH launching is not implemented yet" onClick={() => onLaunch(server)}>
+          <button className="button primary planned-disabled" disabled title="SSH launching is coming later">
             <Terminal size={17} />
             Open SSH
+            <span className="planned-badge">Coming later</span>
           </button>
-          <button className="button" onClick={() => onCopyCommand(server)}>
+          <button className="button" disabled={busy} onClick={() => onCopyCommand(server)}>
             <Copy size={17} />
             Copy command
           </button>
@@ -462,6 +515,7 @@ function ServerDetails({
             <span>No secrets here</span>
           </div>
           <p className={server.notes?.trim() ? "notes" : "muted"}>{server.notes?.trim() || "No notes saved for this server."}</p>
+          <p className="field-hint">Notes are plaintext local metadata. Do not store passwords, private keys, tokens, or sudo details here.</p>
         </section>
       </section>
 
@@ -489,7 +543,12 @@ function ServerDetails({
             <h3>Planned actions</h3>
             <span>Later</span>
           </div>
-          <p className="muted">External SSH launch, web admin links, and SSH config import are not implemented in this milestone.</p>
+          <div className="planned-list">
+            <span>External SSH launch</span>
+            <span>Web admin links</span>
+            <span>SSH config import</span>
+          </div>
+          <p className="muted">These are intentionally disabled until their backend behavior is implemented.</p>
         </section>
       </aside>
     </div>
@@ -514,6 +573,51 @@ function keyLabel(keyRefs: SshKeyRef[], keyId: string | null) {
   return key ? `${key.label} (${key.path})` : "Missing key reference";
 }
 
+function DeleteServerDialog({
+  server,
+  onCancel,
+  onConfirm,
+  busy,
+}: {
+  server: ServerProfile;
+  onCancel: () => void;
+  onConfirm: () => void;
+  busy: boolean;
+}) {
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <section className="modal confirm-modal" role="dialog" aria-modal="true" aria-labelledby="delete-server-title">
+        <div className="modal-heading">
+          <div>
+            <p className="eyebrow">Confirm delete</p>
+            <h2 id="delete-server-title">Delete {server.displayName}?</h2>
+          </div>
+          <button type="button" className="icon-button" aria-label="Close" disabled={busy} onClick={onCancel}>
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="confirm-body">
+          <Trash2 size={24} />
+          <div>
+            <p>This removes only the local SSH-Buddy profile metadata for this server.</p>
+            <p className="muted">OpenSSH keys, ssh-agent state, and remote systems are not changed.</p>
+          </div>
+        </div>
+
+        <div className="modal-actions">
+          <button type="button" className="button ghost" disabled={busy} onClick={onCancel}>
+            Cancel
+          </button>
+          <button type="button" className="button danger" disabled={busy} onClick={onConfirm}>
+            Delete server
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function ServerForm({
   form,
   groups,
@@ -521,6 +625,7 @@ function ServerForm({
   onChange,
   onCancel,
   onSave,
+  busy,
 }: {
   form: ServerFormModel;
   groups: Group[];
@@ -528,7 +633,13 @@ function ServerForm({
   onChange: (form: ServerFormModel) => void;
   onCancel: () => void;
   onSave: (form: ServerFormModel) => void;
+  busy: boolean;
 }) {
+  const [submitted, setSubmitted] = useState(false);
+  const errors = validateServerForm(form);
+  const selectedKey = keyRefs.find((key) => key.id === form.identityFileId) ?? null;
+  const selectedGroup = groups.find((group) => group.id === form.groupId) ?? null;
+
   const update = <Key extends keyof ServerFormModel>(key: Key, value: ServerFormModel[Key]) => {
     onChange({ ...form, [key]: value });
   };
@@ -537,8 +648,13 @@ function ServerForm({
     <div className="modal-backdrop" role="presentation">
       <form
         className="modal"
+        noValidate
         onSubmit={(event) => {
           event.preventDefault();
+          setSubmitted(true);
+          if (hasServerFormErrors(errors)) {
+            return;
+          }
           onSave(form);
         }}
       >
@@ -547,7 +663,7 @@ function ServerForm({
             <p className="eyebrow">Server profile</p>
             <h2>{form.id ? "Edit server" : "Add server"}</h2>
           </div>
-          <button type="button" className="icon-button" aria-label="Close" onClick={onCancel}>
+          <button type="button" className="icon-button" aria-label="Close" disabled={busy} onClick={onCancel}>
             <X size={18} />
           </button>
         </div>
@@ -555,11 +671,31 @@ function ServerForm({
         <div className="form-grid">
           <label>
             Display name
-            <input value={form.displayName} onChange={(event) => update("displayName", event.target.value)} required />
+            <input
+              value={form.displayName}
+              onChange={(event) => update("displayName", event.target.value)}
+              aria-invalid={submitted && Boolean(errors.displayName)}
+              aria-describedby={submitted && errors.displayName ? "display-name-error" : undefined}
+            />
+            {submitted && errors.displayName ? (
+              <span className="field-error" id="display-name-error">
+                {errors.displayName}
+              </span>
+            ) : null}
           </label>
           <label>
             Hostname or IP
-            <input value={form.host} onChange={(event) => update("host", event.target.value)} required />
+            <input
+              value={form.host}
+              onChange={(event) => update("host", event.target.value)}
+              aria-invalid={submitted && Boolean(errors.host)}
+              aria-describedby={submitted && errors.host ? "host-error" : undefined}
+            />
+            {submitted && errors.host ? (
+              <span className="field-error" id="host-error">
+                {errors.host}
+              </span>
+            ) : null}
           </label>
           <label>
             Port
@@ -568,39 +704,68 @@ function ServerForm({
               min={1}
               max={65535}
               value={form.port}
-              onChange={(event) => update("port", Number(event.target.value))}
-              required
+              onChange={(event) => update("port", event.target.value)}
+              aria-invalid={submitted && Boolean(errors.port)}
+              aria-describedby={submitted && errors.port ? "port-error" : undefined}
             />
+            {submitted && errors.port ? (
+              <span className="field-error" id="port-error">
+                {errors.port}
+              </span>
+            ) : null}
           </label>
           <label>
             Username
             <input value={form.username} onChange={(event) => update("username", event.target.value)} placeholder="OpenSSH default" />
           </label>
-          <label>
-            SSH key reference
-            <select value={form.identityFileId} onChange={(event) => update("identityFileId", event.target.value)}>
-              <option value="">OpenSSH default</option>
-              {keyRefs.map((key) => (
-                <option key={key.id} value={key.id}>
-                  {key.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Group
-            <select value={form.groupId} onChange={(event) => update("groupId", event.target.value)}>
-              <option value="">Ungrouped</option>
-              {groups.map((group) => (
-                <option key={group.id} value={group.id}>
-                  {group.name}
-                </option>
-              ))}
-            </select>
-          </label>
+          <div className="field-stack">
+            <label>
+              SSH key reference
+              <select value={form.identityFileId} onChange={(event) => update("identityFileId", event.target.value)}>
+                <option value="">OpenSSH default</option>
+                {keyRefs.map((key) => (
+                  <option key={key.id} value={key.id}>
+                    {key.label} - {key.path}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {selectedKey ? (
+              <div className="selected-meta">
+                <strong>{selectedKey.label}</strong>
+                <span>{selectedKey.path}</span>
+                {selectedKey.fingerprint ? <code>{selectedKey.fingerprint}</code> : null}
+                {selectedKey.comment ? <span>{selectedKey.comment}</span> : null}
+              </div>
+            ) : (
+              <p className="field-hint">OpenSSH config and ssh-agent decide which default key is used.</p>
+            )}
+          </div>
+          <div className="field-stack">
+            <label>
+              Group
+              <select value={form.groupId} onChange={(event) => update("groupId", event.target.value)}>
+                <option value="">Ungrouped</option>
+                {groups.map((group) => (
+                  <option key={group.id} value={group.id}>
+                    {group.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {selectedGroup ? (
+              <div className="selected-meta inline">
+                <span className="color-dot" style={{ backgroundColor: selectedGroup.color ?? "#3aa675" }} />
+                <strong>{selectedGroup.name}</strong>
+              </div>
+            ) : (
+              <p className="field-hint">This profile will stay in the ungrouped list.</p>
+            )}
+          </div>
           <label className="span-2">
             Tags
             <input value={form.tagText} onChange={(event) => update("tagText", event.target.value)} placeholder="linux, prod, nas" />
+            <span className="field-hint">Use commas to separate tags.</span>
           </label>
           <label className="check-row span-2">
             <input type="checkbox" checked={form.favorite} onChange={(event) => update("favorite", event.target.checked)} />
@@ -614,10 +779,10 @@ function ServerForm({
         </div>
 
         <div className="modal-actions">
-          <button type="button" className="button ghost" onClick={onCancel}>
+          <button type="button" className="button ghost" disabled={busy} onClick={onCancel}>
             Cancel
           </button>
-          <button type="submit" className="button primary">
+          <button type="submit" className="button primary" disabled={busy}>
             Save server
           </button>
         </div>
@@ -672,6 +837,13 @@ function GroupsPanel({
             </button>
           </div>
         ))}
+        {groups.length === 0 ? (
+          <div className="empty-state compact">
+            <Folder size={34} />
+            <h3>No groups yet</h3>
+            <p>Create groups to organize homelab hosts by role, site, or environment.</p>
+          </div>
+        ) : null}
       </div>
     </section>
   );
@@ -686,7 +858,8 @@ function KeysPanel({
   onSave: (input: SshKeyInput) => void;
   onDelete: (key: SshKeyRef) => void;
 }) {
-  const [draft, setDraft] = useState<SshKeyInput>({ label: "", path: "" });
+  const emptyDraft: SshKeyInput = { label: "", path: "", fingerprint: "", comment: "" };
+  const [draft, setDraft] = useState<SshKeyInput>(emptyDraft);
 
   return (
     <section className="management-grid">
@@ -694,8 +867,13 @@ function KeysPanel({
         className="panel edit-panel"
         onSubmit={(event) => {
           event.preventDefault();
-          onSave(draft);
-          setDraft({ label: "", path: "" });
+          onSave({
+            label: draft.label,
+            path: draft.path,
+            fingerprint: draft.fingerprint?.trim() || null,
+            comment: draft.comment?.trim() || null,
+          });
+          setDraft(emptyDraft);
         }}
       >
         <h2>Add key reference</h2>
@@ -707,6 +885,18 @@ function KeysPanel({
         <label>
           Path
           <input value={draft.path} onChange={(event) => setDraft({ ...draft, path: event.target.value })} placeholder="~/.ssh/id_ed25519" required />
+        </label>
+        <label>
+          Fingerprint
+          <input
+            value={draft.fingerprint ?? ""}
+            onChange={(event) => setDraft({ ...draft, fingerprint: event.target.value })}
+            placeholder="SHA256:..."
+          />
+        </label>
+        <label>
+          Comment
+          <input value={draft.comment ?? ""} onChange={(event) => setDraft({ ...draft, comment: event.target.value })} placeholder="Laptop key" />
         </label>
         <button className="button primary" type="submit">
           <Plus size={17} />
@@ -722,12 +912,20 @@ function KeysPanel({
               <strong>{key.label}</strong>
               <span>{key.path}</span>
               {key.fingerprint ? <code>{key.fingerprint}</code> : null}
+              {key.comment ? <span>{key.comment}</span> : null}
             </div>
             <button className="icon-button danger" aria-label={`Delete ${key.label}`} onClick={() => onDelete(key)}>
               <Trash2 size={17} />
             </button>
           </div>
         ))}
+        {keys.length === 0 ? (
+          <div className="empty-state compact">
+            <KeyRound size={34} />
+            <h3>No key references yet</h3>
+            <p>Add paths to existing OpenSSH keys. SSH-Buddy never stores private key contents.</p>
+          </div>
+        ) : null}
       </div>
     </section>
   );
