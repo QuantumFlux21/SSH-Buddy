@@ -7,9 +7,9 @@ use std::{
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 
 use crate::domain::{
-    default_settings, new_id, normalize_notes, normalize_optional, normalize_rdp_monitor_ids,
-    normalize_tag_names, normalize_text, normalize_tunnel_bind_host, now_timestamp,
-    validate_app_settings, validate_group_input, validate_rdp_settings_input,
+    default_settings, new_id, normalize_notes, normalize_optional, normalize_rdp_certificate_mode,
+    normalize_rdp_monitor_ids, normalize_tag_names, normalize_text, normalize_tunnel_bind_host,
+    now_timestamp, validate_app_settings, validate_group_input, validate_rdp_settings_input,
     validate_server_input, validate_ssh_key_input, validate_tunnel_input, validate_web_link_input,
     AppResult, AppSettings, Group, GroupInput, RdpSettings, RdpSettingsInput, ServerInput,
     ServerProfile, SshKeyInput, SshKeyRef, Tag, Tunnel, TunnelInput, WebLink, WebLinkInput,
@@ -41,6 +41,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
     (
         "007_rdp_monitor_ids",
         include_str!("../migrations/007_rdp_monitor_ids.sql"),
+    ),
+    (
+        "008_rdp_certificate_mode",
+        include_str!("../migrations/008_rdp_certificate_mode.sql"),
     ),
 ];
 
@@ -772,14 +776,16 @@ impl Database {
         conn.execute(
             "
             INSERT INTO server_rdp_settings (
-              server_profile_id, enabled, username, domain, port, fullscreen,
-              multi_monitor, monitor_ids, width, height, color_depth, created_at, updated_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12)
+              server_profile_id, enabled, username, domain, port, certificate_mode,
+              fullscreen, multi_monitor, monitor_ids, width, height, color_depth,
+              created_at, updated_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?13)
             ON CONFLICT(server_profile_id) DO UPDATE SET
               enabled = excluded.enabled,
               username = excluded.username,
               domain = excluded.domain,
               port = excluded.port,
+              certificate_mode = excluded.certificate_mode,
               fullscreen = excluded.fullscreen,
               multi_monitor = excluded.multi_monitor,
               monitor_ids = excluded.monitor_ids,
@@ -794,6 +800,7 @@ impl Database {
                 normalize_optional(input.username),
                 normalize_optional(input.domain),
                 input.port.unwrap_or(u32::from(DEFAULT_RDP_PORT)) as i64,
+                normalize_rdp_certificate_mode(input.certificate_mode),
                 bool_to_i64(input.fullscreen),
                 bool_to_i64(input.multi_monitor),
                 normalize_rdp_monitor_ids(input.monitor_ids),
@@ -1107,7 +1114,7 @@ fn get_rdp_settings_by_server(
     conn.query_row(
         "
         SELECT server_profile_id, enabled, username, domain, port, fullscreen, multi_monitor,
-               monitor_ids, width, height, color_depth, created_at, updated_at
+               monitor_ids, width, height, color_depth, certificate_mode, created_at, updated_at
         FROM server_rdp_settings
         WHERE server_profile_id = ?1
         ",
@@ -1157,8 +1164,9 @@ fn rdp_settings_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RdpSetting
         width: row.get::<_, Option<i64>>(8)?.map(|value| value as u16),
         height: row.get::<_, Option<i64>>(9)?.map(|value| value as u16),
         color_depth: row.get::<_, Option<i64>>(10)?.map(|value| value as u16),
-        created_at: row.get(11)?,
-        updated_at: row.get(12)?,
+        certificate_mode: row.get(11)?,
+        created_at: row.get(12)?,
+        updated_at: row.get(13)?,
     })
 }
 
@@ -1245,6 +1253,9 @@ mod tests {
         assert!(db.column_exists("server_profiles", "proxy_jump").unwrap());
         assert!(db
             .column_exists("server_rdp_settings", "monitor_ids")
+            .unwrap());
+        assert!(db
+            .column_exists("server_rdp_settings", "certificate_mode")
             .unwrap());
     }
 
@@ -1353,6 +1364,7 @@ mod tests {
             username: Some("labuser".to_string()),
             domain: Some("LAB".to_string()),
             port: Some(3390),
+            certificate_mode: Some("tofu".to_string()),
             fullscreen: false,
             multi_monitor: true,
             monitor_ids: Some("0,1".to_string()),
@@ -1406,6 +1418,7 @@ mod tests {
         assert_eq!(created.username.as_deref(), Some("labuser"));
         assert_eq!(created.domain.as_deref(), Some("LAB"));
         assert_eq!(created.port, 3390);
+        assert_eq!(created.certificate_mode, "tofu");
         assert!(created.multi_monitor);
         assert_eq!(created.monitor_ids.as_deref(), Some("0,1"));
         assert_eq!(created.width, Some(1920));
@@ -1420,6 +1433,7 @@ mod tests {
                     username: None,
                     domain: None,
                     port: None,
+                    certificate_mode: Some("prompt".to_string()),
                     fullscreen: true,
                     multi_monitor: false,
                     monitor_ids: None,
@@ -1431,6 +1445,7 @@ mod tests {
             .unwrap();
         assert!(!updated.enabled);
         assert_eq!(updated.port, 3389);
+        assert_eq!(updated.certificate_mode, "prompt");
         assert!(updated.fullscreen);
         assert_eq!(updated.color_depth, Some(24));
 
@@ -1490,6 +1505,13 @@ mod tests {
         assert_eq!(
             db.save_rdp_settings(&server.id, input).unwrap_err(),
             "RDP monitor IDs must be comma-separated monitor numbers"
+        );
+
+        let mut input = rdp_settings_input();
+        input.certificate_mode = Some("trust-everything".to_string());
+        assert_eq!(
+            db.save_rdp_settings(&server.id, input).unwrap_err(),
+            "RDP certificate mode must be prompt, tofu, or ignore"
         );
     }
 

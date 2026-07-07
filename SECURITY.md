@@ -37,7 +37,8 @@ SSH-Buddy must not automate sudo by storing or injecting sudo passwords. Normal 
 - Import stores explicit `IdentityFile` paths as key references only.
 - ProxyJump values are stored as local metadata and passed to OpenSSH with `-J` after validation.
 - SFTP launch uses the system OpenSSH `sftp` client and passes ProxyJump with `-o ProxyJump=...` for compatibility.
-- RDP launch uses `xfreerdp3` or `xfreerdp` and never includes `/p:` password arguments.
+- RDP launch uses `xfreerdp3` or `xfreerdp` through the selected external terminal so FreeRDP can prompt interactively, and never includes `/p:` password arguments.
+- RDP certificate handling is allowlisted to prompt/default, `/cert:tofu`, or `/cert:ignore`; ignore is marked less secure and is not selected silently.
 - RDP monitor selection is passed only as validated `/monitors:<ids>` values.
 - Local SSH tunnels are launched with OpenSSH `-N -L` after validating bind host, remote host, and ports.
 - Web/admin links must be `http://` or `https://` and must not contain embedded credentials.
@@ -55,7 +56,7 @@ SFTP support delegates file-transfer behavior to the system OpenSSH `sftp` clien
 
 ## RDP Safety
 
-RDP support delegates remote desktop behavior to FreeRDP through `xfreerdp3` or `xfreerdp`. SSH-Buddy stores only launch metadata such as username, domain, port, display mode, monitor IDs, dimensions, and color depth. Monitor IDs are validated as comma-separated monitor numbers and are not an arbitrary FreeRDP option field. SSH-Buddy does not store RDP passwords and does not pass `/p:` arguments. FreeRDP prompts interactively when credentials are required.
+RDP support delegates remote desktop behavior to FreeRDP through `xfreerdp3` or `xfreerdp`, launched inside the selected external terminal so certificate trust and credential prompts have a usable TTY. SSH-Buddy stores only launch metadata such as username, domain, port, certificate mode, display mode, monitor IDs, dimensions, and color depth. Monitor IDs are validated as comma-separated monitor numbers and are not an arbitrary FreeRDP option field. SSH-Buddy does not store RDP passwords and does not pass `/p:` arguments. FreeRDP prompts interactively when credentials are required.
 
 RDP settings are separate from SSH/SFTP assumptions. SSH keys, ssh-agent, ProxyJump, and sudo/root workflows do not authenticate RDP.
 

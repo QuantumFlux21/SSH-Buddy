@@ -18,7 +18,7 @@ The core MVP is implemented:
 - Saved local SSH tunnel profiles with copy and external-terminal launch actions.
 - Linux-first development flow, with CachyOS/KDE as the primary target environment.
 
-The project is pre-1.0. `v0.1.0` is the first public GitHub release, `v0.2.0` is the ProxyJump and local tunnel feature release, and `v0.3.0` is the SFTP and RDP external launcher feature release.
+The project is pre-1.0. `v0.1.0` is the first public GitHub release, `v0.2.0` is the ProxyJump and local tunnel feature release, `v0.3.0` is the SFTP and RDP external launcher feature release, and `v0.3.1` is a Linux desktop clipboard/RDP prompt bugfix release.
 
 ## Stack
 
@@ -46,26 +46,26 @@ https://github.com/QuantumFlux21/SSH-Buddy/releases
 For Linux, download the AppImage, make it executable, and run it:
 
 ```sh
-chmod +x SSH-Buddy-v0.3.0-linux-amd64.AppImage
-./SSH-Buddy-v0.3.0-linux-amd64.AppImage
+chmod +x SSH-Buddy-v0.3.1-linux-amd64.AppImage
+./SSH-Buddy-v0.3.1-linux-amd64.AppImage
 ```
 
-Replace `v0.3.0` with the version you downloaded if you are installing a different release.
+Replace `v0.3.1` with the version you downloaded if you are installing a different release.
 
 The Linux AppImage expects the OpenSSH client and at least one supported external terminal in `PATH`: Konsole, kitty, Alacritty, WezTerm, GNOME Terminal, or xterm. Some distributions may also require AppImage/FUSE compatibility packages.
 
 On some Wayland/WebKitGTK sessions, use the DMA-BUF workaround:
 
 ```sh
-WEBKIT_DISABLE_DMABUF_RENDERER=1 ./SSH-Buddy-v0.3.0-linux-amd64.AppImage
+WEBKIT_DISABLE_DMABUF_RENDERER=1 ./SSH-Buddy-v0.3.1-linux-amd64.AppImage
 ```
 
-For Windows, download the NSIS installer named like `SSH-Buddy-v0.3.0-windows-x64-setup.exe`.
+For Windows, download the NSIS installer named like `SSH-Buddy-v0.3.1-windows-x64-setup.exe`.
 
 For macOS, download the `.dmg` that matches your CPU:
 
-- Apple Silicon: `SSH-Buddy-v0.3.0-darwin-aarch64.dmg`
-- Intel: `SSH-Buddy-v0.3.0-darwin-x64.dmg`
+- Apple Silicon: `SSH-Buddy-v0.3.1-darwin-aarch64.dmg`
+- Intel: `SSH-Buddy-v0.3.1-darwin-x64.dmg`
 
 Windows and macOS builds are currently unsigned. Windows SmartScreen, macOS Gatekeeper, and browser download warnings may appear. Proper Windows code signing and macOS signing/notarization are future release-hardening work.
 
@@ -134,6 +134,24 @@ cargo check
 cargo test
 ```
 
+## Troubleshooting Launch and Clipboard Issues
+
+If a copy button fails, SSH-Buddy now shows the command in a manual-copy panel. In the desktop app, clipboard writes use Tauri's clipboard manager plugin; in browser/Vite preview mode, SSH-Buddy falls back to the browser clipboard API when it is available.
+
+If Open SSH, Open SFTP, tunnel launch, or RDP launch appears to do nothing, check the "Last launch attempt" panel. It shows the action type, selected terminal/client, executable, command preview, key path checks, `.pub` file checks, required binary checks, and whether the backend result was preflight failed, spawn failed, or process spawned.
+
+On KDE/Wayland, the auto terminal path prefers Konsole when it is available and launches it with `konsole -e <command> <args...>`. If a Konsole window opens and closes immediately, the terminal process likely started but the child `ssh`/`sftp` command exited. Copy the command from SSH-Buddy and run it in an existing terminal to see the OpenSSH error directly.
+
+If Konsole is unreliable on your session, set Settings -> Preferred terminal to Alacritty. Install Alacritty if needed, then retry Open SSH or Open SFTP. You can also manually run the copied SSH/SFTP command in any terminal.
+
+For RDP, SSH-Buddy launches FreeRDP through the selected external terminal so certificate and password prompts have a usable TTY. If RDP closes immediately, copy the RDP command and run it manually from a terminal.
+
+If FreeRDP reports "Monitor configuration has gaps" or multi-monitor launch fails, first disable Multi-monitor and confirm a single-monitor session works. KDE monitor layouts used with `/multimon` may need contiguous monitor geometry. Then try explicit Monitor IDs in SSH-Buddy, for example `0,1`, and compare against:
+
+```sh
+xfreerdp3 /monitor-list
+```
+
 ## Local Data and Reset
 
 SSH-Buddy stores local metadata in a SQLite database named `ssh-buddy.sqlite3` in the Tauri app data directory. The database stores profiles, groups, tags, SSH key path references, ProxyJump values, tunnel profiles, RDP settings, web links, notes, and settings. It does not store private key contents or passwords.
@@ -162,9 +180,9 @@ For compatibility, SFTP commands use `-P <port>` for non-default ports, `-i <ide
 
 ## RDP External Launch
 
-SSH-Buddy can store per-server RDP launch settings and start FreeRDP externally using `xfreerdp3` when available, then `xfreerdp`. RDP settings can include username, domain, port, fullscreen, multi-monitor, optional monitor IDs such as `0,1`, dimensions, and color depth.
+SSH-Buddy can store per-server RDP launch settings and start FreeRDP externally using `xfreerdp3` when available, then `xfreerdp`. Launch uses the selected external terminal so FreeRDP can prompt for certificate trust or credentials. RDP settings can include username, domain, port, certificate mode, fullscreen, multi-monitor, optional monitor IDs such as `0,1`, dimensions, and color depth.
 
-RDP commands are built from saved profile data only, for example `xfreerdp3 /v:host:3389 /u:username`. With multi-monitor enabled, SSH-Buddy passes `/multimon`; if monitor IDs are configured, it passes a validated value such as `/monitors:0,1`. SSH-Buddy never stores or passes `/p:` password arguments. FreeRDP prompts interactively for credentials when needed.
+RDP commands are built from saved profile data only, for example `xfreerdp3 /v:host:3389 /cert:tofu /u:username`. Certificate mode can be default/prompt, trust on first use with `/cert:tofu`, or ignore with `/cert:ignore`. Trust on first use is recommended for many Windows RDP hosts with self-signed certificates. Ignore is less secure and is never selected silently. With multi-monitor enabled, SSH-Buddy passes `/multimon`; if monitor IDs are configured, it passes a validated value such as `/monitors:0,1`. SSH-Buddy never stores or passes `/p:` password arguments. FreeRDP prompts interactively for credentials when needed.
 
 ## SSH Tunnels
 
@@ -178,7 +196,7 @@ SSH-Buddy uses system OpenSSH and existing SSH keys. It stores key labels, key p
 
 Normal terminal prompts remain the default for SSH passphrases, host key confirmation, passwords, and `sudo`. Automatic password injection and privileged command automation are intentionally out of scope.
 
-Process execution is backend-owned. SSH, SFTP, RDP, and tunnel launch build argv arrays without shell string interpolation. SSH/SFTP/tunnel actions launch through supported terminals where appropriate; RDP launches the external FreeRDP client directly. ProxyJump, RDP settings, and tunnel values are validated before use. Web links are opened through the OS/browser opener after backend URL validation.
+Process execution is backend-owned. SSH, SFTP, RDP, and tunnel launch build argv arrays without shell string interpolation. SSH/SFTP/tunnel actions launch through supported terminals where appropriate; RDP launches FreeRDP through the selected external terminal so prompts have a usable TTY. ProxyJump, RDP settings, and tunnel values are validated before use. Web links are opened through the OS/browser opener after backend URL validation.
 
 ## Release Artifacts
 
@@ -194,7 +212,7 @@ Windows and macOS builds are unsigned. Windows SmartScreen, macOS Gatekeeper, an
 
 ## Maintainer Release Process
 
-1. For the v0.3.0 release, confirm the version is `0.3.0` in `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, and `src-tauri/tauri.conf.json`. The release workflow artifact names use the app version, so do not tag `v0.3.0` while any of these files still say `0.2.0`.
+1. For the v0.3.1 release, confirm the version is `0.3.1` in `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, and `src-tauri/tauri.conf.json`. The release workflow artifact names use the app version, so do not tag `v0.3.1` while any of these files still say `0.3.0`.
 2. Run local checks:
 
 ```sh
@@ -209,8 +227,8 @@ cargo test
 4. Push the tag:
 
 ```sh
-git tag v0.3.0
-git push origin v0.3.0
+git tag v0.3.1
+git push origin v0.3.1
 ```
 
 5. Review the draft GitHub release generated by `.github/workflows/release.yml`.

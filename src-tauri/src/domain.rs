@@ -21,6 +21,14 @@ pub const TUNNEL_TYPE_LOCAL: &str = "local";
 pub const DEFAULT_LOCAL_BIND_HOST: &str = "127.0.0.1";
 pub const DEFAULT_RDP_PORT: u16 = 3389;
 pub const SUPPORTED_RDP_COLOR_DEPTHS: &[u16] = &[16, 24, 32];
+pub const RDP_CERTIFICATE_MODE_PROMPT: &str = "prompt";
+pub const RDP_CERTIFICATE_MODE_TOFU: &str = "tofu";
+pub const RDP_CERTIFICATE_MODE_IGNORE: &str = "ignore";
+pub const SUPPORTED_RDP_CERTIFICATE_MODES: &[&str] = &[
+    RDP_CERTIFICATE_MODE_PROMPT,
+    RDP_CERTIFICATE_MODE_TOFU,
+    RDP_CERTIFICATE_MODE_IGNORE,
+];
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -87,6 +95,7 @@ pub struct RdpSettings {
     pub username: Option<String>,
     pub domain: Option<String>,
     pub port: u16,
+    pub certificate_mode: String,
     pub fullscreen: bool,
     pub multi_monitor: bool,
     pub monitor_ids: Option<String>,
@@ -188,6 +197,7 @@ pub struct RdpSettingsInput {
     pub username: Option<String>,
     pub domain: Option<String>,
     pub port: Option<u32>,
+    pub certificate_mode: Option<String>,
     pub fullscreen: bool,
     pub multi_monitor: bool,
     pub monitor_ids: Option<String>,
@@ -218,6 +228,37 @@ pub struct ImportResult {
     pub imported: usize,
     pub skipped: usize,
     pub servers: Vec<ServerProfile>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LaunchBinaryStatus {
+    pub name: String,
+    pub exists: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LaunchDiagnostics {
+    pub action_type: String,
+    pub selected_terminal_or_client: Option<String>,
+    pub executable: Option<String>,
+    pub command_preview: String,
+    pub key_path: Option<String>,
+    pub key_file_exists: Option<bool>,
+    pub public_key_path: Option<String>,
+    pub public_key_file_exists: Option<bool>,
+    pub required_binaries: Vec<LaunchBinaryStatus>,
+    pub backend_result: String,
+    pub message: String,
+    pub free_rdp_executable: Option<String>,
+    pub launched_via_terminal: Option<bool>,
+    pub certificate_mode: Option<String>,
+    pub rdp_username: Option<String>,
+    pub rdp_domain: Option<String>,
+    pub rdp_port: Option<u16>,
+    pub rdp_multi_monitor: Option<bool>,
+    pub rdp_monitor_ids: Option<String>,
 }
 
 pub fn default_settings() -> AppSettings {
@@ -486,6 +527,7 @@ pub fn normalize_tunnel_bind_host(value: Option<String>) -> String {
 
 pub fn validate_rdp_settings_input(input: &RdpSettingsInput) -> AppResult<()> {
     validate_rdp_port(input.port.unwrap_or(u32::from(DEFAULT_RDP_PORT)))?;
+    validate_rdp_certificate_mode(input.certificate_mode.as_deref())?;
 
     if let Some(username) = &input.username {
         validate_rdp_text_field(username, "RDP username")?;
@@ -522,6 +564,24 @@ pub fn validate_rdp_settings_input(input: &RdpSettingsInput) -> AppResult<()> {
 
 pub fn normalize_rdp_monitor_ids(value: Option<String>) -> Option<String> {
     value.and_then(|item| normalize_text(&item))
+}
+
+pub fn normalize_rdp_certificate_mode(value: Option<String>) -> String {
+    value
+        .and_then(|item| normalize_text(&item))
+        .unwrap_or_else(|| RDP_CERTIFICATE_MODE_PROMPT.to_string())
+}
+
+fn validate_rdp_certificate_mode(value: Option<&str>) -> AppResult<()> {
+    let mode = value
+        .and_then(normalize_text)
+        .unwrap_or_else(|| RDP_CERTIFICATE_MODE_PROMPT.to_string());
+
+    if SUPPORTED_RDP_CERTIFICATE_MODES.contains(&mode.as_str()) {
+        Ok(())
+    } else {
+        Err("RDP certificate mode must be prompt, tofu, or ignore".to_string())
+    }
 }
 
 fn validate_rdp_port(port: u32) -> AppResult<()> {
@@ -713,6 +773,7 @@ mod tests {
             username: Some("labuser".to_string()),
             domain: Some("LAB".to_string()),
             port: Some(3389),
+            certificate_mode: Some(RDP_CERTIFICATE_MODE_TOFU.to_string()),
             fullscreen: false,
             multi_monitor: true,
             monitor_ids: Some("0,1".to_string()),
@@ -806,6 +867,13 @@ mod tests {
         assert_eq!(
             validate_rdp_settings_input(&input).unwrap_err(),
             "RDP color depth must be 16, 24, or 32"
+        );
+
+        let mut input = valid_rdp_settings_input();
+        input.certificate_mode = Some("unsafe".to_string());
+        assert_eq!(
+            validate_rdp_settings_input(&input).unwrap_err(),
+            "RDP certificate mode must be prompt, tofu, or ignore"
         );
 
         let mut input = valid_rdp_settings_input();

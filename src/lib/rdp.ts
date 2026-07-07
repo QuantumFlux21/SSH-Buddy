@@ -1,10 +1,11 @@
-import type { RdpSettings, RdpSettingsInput } from "./types";
+import type { RdpCertificateMode, RdpSettings, RdpSettingsInput } from "./types";
 
 export interface RdpSettingsFormModel {
   enabled: boolean;
   username: string;
   domain: string;
   port: string;
+  certificateMode: RdpCertificateMode;
   fullscreen: boolean;
   multiMonitor: boolean;
   monitorIds: string;
@@ -20,6 +21,7 @@ export const newRdpSettingsDraft = (settings?: RdpSettings | null): RdpSettingsF
   username: settings?.username ?? "",
   domain: settings?.domain ?? "",
   port: String(settings?.port ?? 3389),
+  certificateMode: settings?.certificateMode ?? "tofu",
   fullscreen: settings?.fullscreen ?? false,
   multiMonitor: settings?.multiMonitor ?? false,
   monitorIds: settings?.monitorIds ?? "",
@@ -34,6 +36,7 @@ export function toRdpSettingsInput(form: RdpSettingsFormModel): RdpSettingsInput
     username: form.username.trim() || null,
     domain: form.domain.trim() || null,
     port: parseOptionalNumber(form.port) ?? 3389,
+    certificateMode: form.certificateMode,
     fullscreen: form.fullscreen,
     multiMonitor: form.multiMonitor,
     monitorIds: form.monitorIds.trim() || null,
@@ -92,6 +95,17 @@ export function rdpSettingsSummary(settings: RdpSettings) {
     .join(", ");
 
   return extras ? `${mode}, ${extras}` : mode;
+}
+
+export function rdpCertificateModeLabel(mode: RdpCertificateMode | string) {
+  switch (mode) {
+    case "tofu":
+      return "Trust on first use (/cert:tofu)";
+    case "ignore":
+      return "Ignore certificate (/cert:ignore, less secure)";
+    default:
+      return "Default / prompt";
+  }
 }
 
 function validateMonitorIds(value: string, multiMonitor: boolean) {

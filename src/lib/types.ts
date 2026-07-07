@@ -51,6 +51,7 @@ export interface RdpSettings {
   username: string | null;
   domain: string | null;
   port: number;
+  certificateMode: RdpCertificateMode;
   fullscreen: boolean;
   multiMonitor: boolean;
   monitorIds: string | null;
@@ -134,6 +135,7 @@ export interface RdpSettingsInput {
   username?: string | null;
   domain?: string | null;
   port?: number | null;
+  certificateMode?: RdpCertificateMode | null;
   fullscreen: boolean;
   multiMonitor: boolean;
   monitorIds?: string | null;
@@ -161,3 +163,32 @@ export interface ImportResult {
   skipped: number;
   servers: ServerProfile[];
 }
+
+export interface LaunchBinaryStatus {
+  name: string;
+  exists: boolean;
+}
+
+export interface LaunchDiagnostics {
+  actionType: string;
+  selectedTerminalOrClient: string | null;
+  executable: string | null;
+  commandPreview: string;
+  keyPath: string | null;
+  keyFileExists: boolean | null;
+  publicKeyPath: string | null;
+  publicKeyFileExists: boolean | null;
+  requiredBinaries: LaunchBinaryStatus[];
+  backendResult: "spawned" | "preflightFailed" | "spawnFailed" | string;
+  message: string;
+  freeRdpExecutable: string | null;
+  launchedViaTerminal: boolean | null;
+  certificateMode: RdpCertificateMode | string | null;
+  rdpUsername: string | null;
+  rdpDomain: string | null;
+  rdpPort: number | null;
+  rdpMultiMonitor: boolean | null;
+  rdpMonitorIds: string | null;
+}
+
+export type RdpCertificateMode = "prompt" | "tofu" | "ignore";

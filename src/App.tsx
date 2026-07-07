@@ -21,12 +21,14 @@ import {
   X,
 } from "lucide-react";
 import { api } from "./lib/api";
+import { CLIPBOARD_MANUAL_COPY_MESSAGE, copyTextToClipboard } from "./lib/clipboard";
 import { filterServers, groupName } from "./lib/filters";
 import { serverDestination, shortDate } from "./lib/format";
 import { formatImportPreviewSummary, formatImportResult } from "./lib/importSummary";
 import {
   hasRdpFormErrors,
   newRdpSettingsDraft,
+  rdpCertificateModeLabel,
   rdpSettingsSummary,
   toRdpSettingsInput,
   validateRdpSettingsForm,
@@ -62,6 +64,7 @@ import type {
   GroupInput,
   ImportCandidate,
   ImportResult,
+  LaunchDiagnostics,
   RdpSettings,
   ServerProfile,
   SshKeyInput,
@@ -93,6 +96,8 @@ export default function App() {
   const [busyMessage, setBusyMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [manualCopyCommand, setManualCopyCommand] = useState<string | null>(null);
+  const [lastLaunchAttempt, setLastLaunchAttempt] = useState<LaunchDiagnostics | null>(null);
 
   async function loadState(nextSelectedId?: string | null) {
     setError(null);
@@ -187,20 +192,37 @@ export default function App() {
     };
   }, [activeSection, selectedServer?.id]);
 
-  async function runAction(label: string, action: () => Promise<void>, successMessage?: string) {
+  async function runAction(label: string, action: () => Promise<string | void>, successMessage?: string) {
     setBusyMessage(label);
     setError(null);
     setStatusMessage(null);
+    setManualCopyCommand(null);
     try {
-      await action();
-      if (successMessage) {
-        setStatusMessage(successMessage);
+      const nextStatus = await action();
+      if (nextStatus || successMessage) {
+        setStatusMessage(nextStatus ?? successMessage ?? null);
       }
     } catch (cause: unknown) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setBusyMessage(null);
     }
+  }
+
+  async function copyCommandText(command: string) {
+    const result = await copyTextToClipboard(command);
+    if (!result.ok) {
+      setManualCopyCommand(command);
+      throw new Error(CLIPBOARD_MANUAL_COPY_MESSAGE);
+    }
+  }
+
+  function launchStatus(details: LaunchDiagnostics) {
+    setLastLaunchAttempt(details);
+    if (details.backendResult !== "spawned") {
+      throw new Error(details.message);
+    }
+    return details.message;
   }
 
   async function saveServer(form: ServerFormModel) {
@@ -244,7 +266,7 @@ export default function App() {
       "Copying SSH command",
       async () => {
         const command = await api.getSshCommand(server.id);
-        await navigator.clipboard.writeText(command);
+        await copyCommandText(command);
       },
       "SSH command copied to clipboard.",
     );
@@ -254,9 +276,8 @@ export default function App() {
     await runAction(
       "Launching SSH",
       async () => {
-        await api.launchSsh(server.id);
+        return launchStatus(await api.launchSsh(server.id));
       },
-      "SSH launch requested in your external terminal.",
     );
   }
 
@@ -265,7 +286,7 @@ export default function App() {
       "Copying SFTP command",
       async () => {
         const command = await api.getSftpCommand(server.id);
-        await navigator.clipboard.writeText(command);
+        await copyCommandText(command);
       },
       "SFTP command copied to clipboard.",
     );
@@ -275,9 +296,8 @@ export default function App() {
     await runAction(
       "Launching SFTP",
       async () => {
-        await api.launchSftp(server.id);
+        return launchStatus(await api.launchSftp(server.id));
       },
-      "SFTP launch requested in your external terminal.",
     );
   }
 
@@ -383,7 +403,7 @@ export default function App() {
       "Copying tunnel command",
       async () => {
         const command = await api.getTunnelCommand(server.id, tunnel.id);
-        await navigator.clipboard.writeText(command);
+        await copyCommandText(command);
       },
       "Tunnel command copied to clipboard.",
     );
@@ -393,9 +413,8 @@ export default function App() {
     await runAction(
       "Launching tunnel",
       async () => {
-        await api.launchTunnel(server.id, tunnel.id);
+        return launchStatus(await api.launchTunnel(server.id, tunnel.id));
       },
-      "Tunnel launch requested in your external terminal.",
     );
   }
 
@@ -435,7 +454,7 @@ export default function App() {
       "Copying RDP command",
       async () => {
         const command = await api.getRdpCommand(server.id);
-        await navigator.clipboard.writeText(command);
+        await copyCommandText(command);
       },
       "RDP command copied to clipboard.",
     );
@@ -445,9 +464,8 @@ export default function App() {
     await runAction(
       "Launching RDP",
       async () => {
-        await api.launchRdp(server.id);
+        return launchStatus(await api.launchRdp(server.id));
       },
-      "RDP launch requested.",
     );
   }
 
@@ -569,6 +587,8 @@ export default function App() {
         {error ? <div className="status-banner danger">{error}</div> : null}
         {statusMessage ? <div className="status-banner success">{statusMessage}</div> : null}
         {busyMessage ? <div className="status-banner">{busyMessage}...</div> : null}
+        {manualCopyCommand ? <ManualCopyPanel command={manualCopyCommand} /> : null}
+        {lastLaunchAttempt ? <LaunchDetailsPanel details={lastLaunchAttempt} /> : null}
 
         {activeSection === "servers" ? (
           <ServerDetails
@@ -759,6 +779,114 @@ function NavButton({
       {label}
     </button>
   );
+}
+
+function ManualCopyPanel({ command }: { command: string }) {
+  return (
+    <section className="manual-copy-panel" aria-label="Manual copy command">
+      <div>
+        <strong>Manual copy</strong>
+        <span>{CLIPBOARD_MANUAL_COPY_MESSAGE}</span>
+      </div>
+      <textarea readOnly value={command} aria-label="Command to copy manually" />
+    </section>
+  );
+}
+
+function LaunchDetailsPanel({ details }: { details: LaunchDiagnostics }) {
+  return (
+    <section className={`launch-details ${details.backendResult}`} aria-label="Last launch attempt">
+      <div className="panel-heading">
+        <div>
+          <h3>Last launch attempt</h3>
+          <span>{launchActionLabel(details.actionType)}</span>
+        </div>
+        <span className={`result-pill ${details.backendResult}`}>{launchResultLabel(details.backendResult)}</span>
+      </div>
+
+      <p className="field-hint">{details.message}</p>
+
+      <div className="launch-detail-grid">
+        <LaunchDetail label="Selected terminal/client" value={details.selectedTerminalOrClient ?? "Not selected"} />
+        <LaunchDetail label="Executable used" value={details.executable ?? "None"} />
+        <LaunchDetail label="Key path" value={details.keyPath ?? "No explicit key"} />
+        <LaunchDetail label="Key file exists" value={formatMaybeBoolean(details.keyFileExists)} />
+        <LaunchDetail label="Public key exists" value={formatMaybeBoolean(details.publicKeyFileExists)} />
+      </div>
+
+      {details.actionType === "rdp" ? (
+        <div className="launch-detail-grid">
+          <LaunchDetail label="FreeRDP executable" value={details.freeRdpExecutable ?? "Not selected"} />
+          <LaunchDetail label="Via terminal" value={formatMaybeBoolean(details.launchedViaTerminal)} />
+          <LaunchDetail label="Certificate mode" value={details.certificateMode ? rdpCertificateModeLabel(details.certificateMode) : "Not set"} />
+          <LaunchDetail label="RDP username" value={details.rdpUsername || "Prompt/default"} />
+          <LaunchDetail label="RDP domain" value={details.rdpDomain || "Not set"} />
+          <LaunchDetail label="RDP port" value={details.rdpPort ? String(details.rdpPort) : "Not set"} />
+          <LaunchDetail label="Multi-monitor" value={formatMaybeBoolean(details.rdpMultiMonitor)} />
+          <LaunchDetail label="Monitor IDs" value={details.rdpMonitorIds || "Not set"} />
+        </div>
+      ) : null}
+
+      {details.commandPreview ? (
+        <div className="command-preview">
+          <span>Command preview</span>
+          <code>{details.commandPreview}</code>
+        </div>
+      ) : null}
+
+      <div className="binary-status-list" aria-label="Required binary status">
+        {details.requiredBinaries.map((binary) => (
+          <span key={binary.name} className={binary.exists ? "binary-status ok" : "binary-status missing"}>
+            {binary.name}: {binary.exists ? "found" : "missing"}
+          </span>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function LaunchDetail({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="launch-detail-cell">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function launchActionLabel(actionType: string) {
+  switch (actionType) {
+    case "ssh":
+      return "Open SSH";
+    case "sftp":
+      return "Open SFTP";
+    case "tunnel":
+      return "Open SSH tunnel";
+    case "rdp":
+      return "Open RDP";
+    default:
+      return actionType;
+  }
+}
+
+function launchResultLabel(result: string) {
+  switch (result) {
+    case "spawned":
+      return "Process spawned";
+    case "preflightFailed":
+      return "Preflight failed";
+    case "spawnFailed":
+      return "Spawn failed";
+    default:
+      return result;
+  }
+}
+
+function formatMaybeBoolean(value: boolean | null) {
+  if (value === null) {
+    return "Not applicable";
+  }
+  return value ? "Yes" : "No";
 }
 
 function ServerDetails({
@@ -1077,7 +1205,9 @@ function RdpPanel({
         </button>
       </div>
 
-      <p className="field-hint">SSH-Buddy does not store RDP passwords. FreeRDP will prompt if credentials are needed.</p>
+      <p className="field-hint">
+        SSH-Buddy does not store RDP passwords. FreeRDP may prompt in the external terminal for certificate trust or credentials.
+      </p>
 
       {editingSettings ? <RdpSettingsForm form={editingSettings} busy={busy} onCancel={onCancel} onSave={(form) => onSave(server, form)} /> : null}
 
@@ -1099,8 +1229,9 @@ function RdpPanel({
               <strong>{settings.enabled ? "RDP enabled" : "RDP disabled"}</strong>
               <span>
                 {settings.username ? `${settings.username}${settings.domain ? ` @ ${settings.domain}` : ""}` : "FreeRDP will prompt for username"} ·{" "}
-                port {settings.port} · {rdpSettingsSummary(settings)}
+                port {settings.port} · cert {rdpCertificateModeLabel(settings.certificateMode)} · {rdpSettingsSummary(settings)}
               </span>
+              <span>Launch mode: selected external terminal</span>
             </div>
             <div className="row-actions">
               <button className="button compact" type="button" disabled={busy || !canLaunch} onClick={() => onLaunch(server)}>
@@ -1171,6 +1302,7 @@ function RdpSettingsForm({
         <label>
           Domain
           <input value={draft.domain} onChange={(event) => update("domain", event.target.value)} placeholder="optional" />
+          <span className="field-hint">For local Windows accounts, use "." or the PC name if FreeRDP needs a domain.</span>
         </label>
         <label>
           Port
@@ -1188,6 +1320,18 @@ function RdpSettingsForm({
               {errors.port}
             </span>
           ) : null}
+        </label>
+        <label>
+          Certificate mode
+          <select
+            value={draft.certificateMode}
+            onChange={(event) => update("certificateMode", event.target.value as RdpSettingsFormModel["certificateMode"])}
+          >
+            <option value="tofu">Trust on first use (/cert:tofu) - recommended</option>
+            <option value="prompt">Default / prompt</option>
+            <option value="ignore">Ignore certificate (/cert:ignore, less secure)</option>
+          </select>
+          <span className="field-hint">Windows RDP commonly uses a self-signed certificate. Avoid ignore unless you understand the risk.</span>
         </label>
         <label>
           Color depth

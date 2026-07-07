@@ -6,6 +6,25 @@ All notable changes to SSH-Buddy will be documented in this file.
 
 No unreleased changes yet.
 
+## 0.3.1 - 2026-07-07
+
+Bugfix release for Linux AppImage clipboard behavior, launch diagnostics, and RDP interactive prompts.
+
+### Fixed
+
+- Clipboard copy actions now use the Tauri v2 clipboard manager plugin in the desktop app, with a browser clipboard fallback for Vite preview.
+- Copy failures now show the generated command in a manual-copy panel instead of only surfacing a platform permission error.
+- RDP launch now starts FreeRDP through the selected external terminal so certificate trust and credential prompts have a usable TTY.
+
+### Changed
+
+- SSH, SFTP, tunnel, and RDP launch actions now show a "Last launch attempt" diagnostics panel with the selected terminal/client, executable, command preview, key-file checks, required binary checks, and backend result.
+- Launch success messages now clarify that SSH-Buddy started the external terminal/client process, not that the remote connection itself succeeded.
+- Linux troubleshooting documentation now calls out KDE/Wayland Konsole behavior and the Alacritty preferred-terminal workaround.
+- RDP settings now include an allowlisted certificate mode: default/prompt, trust on first use (`/cert:tofu`), or ignore (`/cert:ignore`, less secure).
+- RDP diagnostics now include the FreeRDP executable, terminal-launch status, certificate mode, username/domain metadata, port, multi-monitor status, monitor IDs, and command preview without passwords.
+- README troubleshooting now includes KDE/FreeRDP multi-monitor guidance and `xfreerdp3 /monitor-list`.
+
 ## 0.3.0 - 2026-07-06
 
 SFTP and RDP external launcher feature release.

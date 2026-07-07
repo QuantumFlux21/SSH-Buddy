@@ -6,6 +6,7 @@ import type {
   GroupInput,
   ImportCandidate,
   ImportResult,
+  LaunchDiagnostics,
   RdpSettings,
   RdpSettingsInput,
   ServerInput,
@@ -67,6 +68,30 @@ const mockState: AppStateSnapshot = {
 const mockWebLinks: Record<string, WebLink[]> = {};
 const mockTunnels: Record<string, Tunnel[]> = {};
 const mockRdpSettings: Record<string, RdpSettings> = {};
+
+function mockLaunchDiagnostics(actionType: string, commandPreview = ""): LaunchDiagnostics {
+  return {
+    actionType,
+    selectedTerminalOrClient: null,
+    executable: null,
+    commandPreview,
+    keyPath: null,
+    keyFileExists: null,
+    publicKeyPath: null,
+    publicKeyFileExists: null,
+    requiredBinaries: [],
+    backendResult: "preflightFailed",
+    message: `${actionType.toUpperCase()} launch requires the Tauri desktop app`,
+    freeRdpExecutable: null,
+    launchedViaTerminal: null,
+    certificateMode: null,
+    rdpUsername: null,
+    rdpDomain: null,
+    rdpPort: null,
+    rdpMultiMonitor: null,
+    rdpMonitorIds: null,
+  };
+}
 
 async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   if (canUseTauri()) {
@@ -204,7 +229,7 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
       if (!server) {
         throw new Error("Server not found");
       }
-      throw new Error("SSH launch requires the Tauri desktop app");
+      return mockLaunchDiagnostics("ssh") as T;
     }
     case "get_sftp_command": {
       const server = mockState.servers.find((item) => item.id === args?.serverId);
@@ -230,7 +255,7 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
       if (!server) {
         throw new Error("Server not found");
       }
-      throw new Error("SFTP launch requires the Tauri desktop app");
+      return mockLaunchDiagnostics("sftp") as T;
     }
     case "get_rdp_settings": {
       const serverId = args?.serverId as string;
@@ -252,6 +277,7 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
         username: input.username?.trim() || null,
         domain: input.domain?.trim() || null,
         port: input.port ?? 3389,
+        certificateMode: input.certificateMode ?? "tofu",
         fullscreen: input.fullscreen,
         multiMonitor: input.multiMonitor,
         monitorIds: input.monitorIds?.trim() || null,
@@ -285,6 +311,12 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
         throw new Error("RDP is not enabled for this server");
       }
       const parts = ["xfreerdp3", `/v:${server.host}:${settings.port}`];
+      if (settings.certificateMode === "tofu") {
+        parts.push("/cert:tofu");
+      }
+      if (settings.certificateMode === "ignore") {
+        parts.push("/cert:ignore");
+      }
       if (settings.username) {
         parts.push(`/u:${settings.username}`);
       }
@@ -323,7 +355,7 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
       if (!settings.enabled) {
         throw new Error("RDP is not enabled for this server");
       }
-      throw new Error("RDP launch requires the Tauri desktop app");
+      return mockLaunchDiagnostics("rdp") as T;
     }
     case "list_tunnels": {
       const serverId = args?.serverId as string;
@@ -424,7 +456,7 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
       if (!tunnel) {
         throw new Error("Tunnel not found");
       }
-      throw new Error("Tunnel launch requires the Tauri desktop app");
+      return mockLaunchDiagnostics("tunnel") as T;
     }
     case "list_web_links": {
       const serverId = args?.serverId as string;
@@ -523,20 +555,20 @@ export const api = {
   deleteSshKey: (id: string) => call<void>("delete_ssh_key_ref", { id }),
   saveSettings: (input: AppSettings) => call<AppSettings>("save_settings", { input }),
   getSshCommand: (serverId: string) => call<string>("get_ssh_command", { serverId }),
-  launchSsh: (serverId: string) => call<void>("launch_ssh", { serverId }),
+  launchSsh: (serverId: string) => call<LaunchDiagnostics>("launch_ssh", { serverId }),
   getSftpCommand: (serverId: string) => call<string>("get_sftp_command", { serverId }),
-  launchSftp: (serverId: string) => call<void>("launch_sftp", { serverId }),
+  launchSftp: (serverId: string) => call<LaunchDiagnostics>("launch_sftp", { serverId }),
   getRdpSettings: (serverId: string) => call<RdpSettings | null>("get_rdp_settings", { serverId }),
   saveRdpSettings: (serverId: string, input: RdpSettingsInput) => call<RdpSettings>("save_rdp_settings", { serverId, input }),
   deleteRdpSettings: (serverId: string) => call<void>("delete_rdp_settings", { serverId }),
   getRdpCommand: (serverId: string) => call<string>("get_rdp_command", { serverId }),
-  launchRdp: (serverId: string) => call<void>("launch_rdp", { serverId }),
+  launchRdp: (serverId: string) => call<LaunchDiagnostics>("launch_rdp", { serverId }),
   listTunnels: (serverId: string) => call<Tunnel[]>("list_tunnels", { serverId }),
   saveTunnel: (serverId: string, id: string | null, input: TunnelInput) =>
     id ? call<Tunnel>("update_tunnel", { id, input }) : call<Tunnel>("create_tunnel", { serverId, input }),
   deleteTunnel: (id: string) => call<void>("delete_tunnel", { id }),
   getTunnelCommand: (serverId: string, tunnelId: string) => call<string>("get_tunnel_command", { serverId, tunnelId }),
-  launchTunnel: (serverId: string, tunnelId: string) => call<void>("launch_tunnel", { serverId, tunnelId }),
+  launchTunnel: (serverId: string, tunnelId: string) => call<LaunchDiagnostics>("launch_tunnel", { serverId, tunnelId }),
   listWebLinks: (serverId: string) => call<WebLink[]>("list_web_links", { serverId }),
   saveWebLink: (serverId: string, id: string | null, input: WebLinkInput) =>
     id ? call<WebLink>("update_web_link", { id, input }) : call<WebLink>("create_web_link", { serverId, input }),

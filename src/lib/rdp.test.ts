@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { newRdpSettingsDraft, rdpSettingsSummary, toRdpSettingsInput, validateRdpSettingsForm } from "./rdp";
+import {
+  newRdpSettingsDraft,
+  rdpCertificateModeLabel,
+  rdpSettingsSummary,
+  toRdpSettingsInput,
+  validateRdpSettingsForm,
+} from "./rdp";
 import type { RdpSettings } from "./types";
 
 describe("RDP form helpers", () => {
@@ -47,6 +53,7 @@ describe("RDP form helpers", () => {
       username: "admin",
       domain: null,
       port: 3389,
+      certificateMode: "tofu",
       fullscreen: false,
       multiMonitor: false,
       monitorIds: null,
@@ -64,6 +71,7 @@ describe("RDP form helpers", () => {
       username: "admin",
       domain: null,
       port: 3389,
+      certificateMode: "ignore",
       fullscreen: false,
       multiMonitor: true,
       monitorIds: "0,1",
@@ -75,5 +83,6 @@ describe("RDP form helpers", () => {
     };
 
     expect(rdpSettingsSummary(settings)).toBe("1920x1080, multi-monitor, monitors 0,1, 32 bpp");
+    expect(rdpCertificateModeLabel(settings.certificateMode)).toContain("less secure");
   });
 });

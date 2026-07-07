@@ -386,6 +386,112 @@ button {
   background: rgba(255, 107, 107, 0.1);
 }
 
+.manual-copy-panel,
+.launch-details {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 16px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: rgba(17, 22, 29, 0.94);
+  box-shadow: var(--shadow);
+  padding: 16px;
+}
+
+.manual-copy-panel {
+  border-color: rgba(242, 193, 78, 0.32);
+  background: rgba(242, 193, 78, 0.08);
+}
+
+.manual-copy-panel div {
+  display: grid;
+  gap: 4px;
+}
+
+.manual-copy-panel span {
+  color: #eadcae;
+  font-size: 13px;
+}
+
+.manual-copy-panel textarea {
+  min-height: 78px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+.launch-details.preflightFailed,
+.launch-details.spawnFailed {
+  border-color: rgba(255, 107, 107, 0.28);
+}
+
+.result-pill,
+.binary-status {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.result-pill.spawned,
+.binary-status.ok {
+  border-color: rgba(66, 211, 146, 0.28);
+  color: #b5f5d6;
+  background: rgba(66, 211, 146, 0.08);
+}
+
+.result-pill.preflightFailed,
+.result-pill.spawnFailed,
+.binary-status.missing {
+  border-color: rgba(255, 107, 107, 0.3);
+  color: #ffc1c1;
+  background: rgba(255, 107, 107, 0.1);
+}
+
+.launch-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.launch-detail-cell {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: rgba(10, 15, 21, 0.52);
+  padding: 10px;
+}
+
+.launch-detail-cell span,
+.command-preview span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.launch-detail-cell strong {
+  overflow-wrap: anywhere;
+}
+
+.command-preview {
+  display: grid;
+  gap: 7px;
+}
+
+.command-preview code {
+  display: block;
+  overflow-x: auto;
+  padding: 10px;
+  white-space: pre;
+}
+
+.binary-status-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
 .detail-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 330px;
@@ -957,6 +1063,10 @@ input[type="color"] {
   .management-grid,
   .settings-grid {
     grid-template-columns: 1fr;
+  }
+
+  .launch-detail-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .workspace-topbar {

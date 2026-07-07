@@ -8,8 +8,10 @@ use std::{
 
 use crate::domain::{
     normalize_tunnel_bind_host, validate_proxy_jump, validate_rdp_monitor_ids,
-    validate_tunnel_input, AppResult, AppSettings, RdpSettings, ServerProfile, Tunnel, TunnelInput,
-    SUPPORTED_TERMINAL_PREFERENCES, TERMINAL_PREFERENCE_AUTO,
+    validate_tunnel_input, AppResult, AppSettings, LaunchBinaryStatus, LaunchDiagnostics,
+    RdpSettings, ServerProfile, Tunnel, TunnelInput, RDP_CERTIFICATE_MODE_IGNORE,
+    RDP_CERTIFICATE_MODE_PROMPT, RDP_CERTIFICATE_MODE_TOFU, SUPPORTED_TERMINAL_PREFERENCES,
+    TERMINAL_PREFERENCE_AUTO,
 };
 
 const TERMINAL_ORDER: &[&str] = &[
@@ -68,6 +70,7 @@ pub fn build_rdp_argv(
     validate_rdp_host(host)?;
 
     let mut argv = vec![client.to_string(), format!("/v:{host}:{}", settings.port)];
+    append_rdp_certificate_option(&mut argv, settings)?;
 
     if let Some(username) = settings.username.as_deref().and_then(normalize_optional) {
         argv.push(format!("/u:{username}"));
@@ -102,6 +105,21 @@ pub fn build_rdp_argv(
     }
 
     Ok(argv)
+}
+
+fn append_rdp_certificate_option(argv: &mut Vec<String>, settings: &RdpSettings) -> AppResult<()> {
+    match settings.certificate_mode.as_str() {
+        RDP_CERTIFICATE_MODE_PROMPT => Ok(()),
+        RDP_CERTIFICATE_MODE_TOFU => {
+            argv.push("/cert:tofu".to_string());
+            Ok(())
+        }
+        RDP_CERTIFICATE_MODE_IGNORE => {
+            argv.push("/cert:ignore".to_string());
+            Ok(())
+        }
+        _ => Err("RDP certificate mode must be prompt, tofu, or ignore".to_string()),
+    }
 }
 
 pub fn build_tunnel_argv(
@@ -302,9 +320,9 @@ pub fn format_argv_for_display(argv: &[String]) -> String {
         .join(" ")
 }
 
-pub fn terminal_command_for(terminal: &str, ssh_argv: &[String]) -> AppResult<ProcessCommand> {
-    if ssh_argv.is_empty() {
-        return Err("SSH command is empty".to_string());
+pub fn terminal_command_for(terminal: &str, command_argv: &[String]) -> AppResult<ProcessCommand> {
+    if command_argv.is_empty() {
+        return Err("Launch command is empty".to_string());
     }
 
     let mut args = match terminal {
@@ -316,7 +334,7 @@ pub fn terminal_command_for(terminal: &str, ssh_argv: &[String]) -> AppResult<Pr
         "xterm" => vec!["-e".to_string()],
         _ => return Err("Unsupported terminal preference".to_string()),
     };
-    args.extend(ssh_argv.iter().cloned());
+    args.extend(command_argv.iter().cloned());
 
     Ok(ProcessCommand {
         program: terminal.to_string(),
@@ -356,44 +374,33 @@ pub fn launch_ssh_in_terminal(
     server: &ServerProfile,
     identity_file: Option<&str>,
     settings: &AppSettings,
-) -> AppResult<()> {
-    let command = build_launch_command(server, identity_file, settings, command_in_path)?;
-    let terminal = command.program.clone();
+) -> AppResult<LaunchDiagnostics> {
+    let (diagnostics, command) =
+        build_ssh_launch_diagnostics(server, identity_file, settings, command_in_path);
 
-    Command::new(&command.program)
-        .args(&command.args)
-        .spawn()
-        .map_err(|error| format!("Failed to launch {}: {error}", terminal_label(&terminal)))?;
-
-    Ok(())
+    Ok(spawn_with_diagnostics(diagnostics, command))
 }
 
 pub fn launch_sftp_in_terminal(
     server: &ServerProfile,
     identity_file: Option<&str>,
     settings: &AppSettings,
-) -> AppResult<()> {
-    let command = build_sftp_launch_command(server, identity_file, settings, command_in_path)?;
-    let terminal = command.program.clone();
+) -> AppResult<LaunchDiagnostics> {
+    let (diagnostics, command) =
+        build_sftp_launch_diagnostics(server, identity_file, settings, command_in_path);
 
-    Command::new(&command.program)
-        .args(&command.args)
-        .spawn()
-        .map_err(|error| format!("Failed to launch {}: {error}", terminal_label(&terminal)))?;
-
-    Ok(())
+    Ok(spawn_with_diagnostics(diagnostics, command))
 }
 
-pub fn launch_rdp(server: &ServerProfile, settings: &RdpSettings) -> AppResult<()> {
-    let command = build_rdp_launch_command(server, settings, command_in_path)?;
-    let program = command.program.clone();
+pub fn launch_rdp(
+    server: &ServerProfile,
+    rdp_settings: &RdpSettings,
+    app_settings: &AppSettings,
+) -> AppResult<LaunchDiagnostics> {
+    let (diagnostics, command) =
+        build_rdp_launch_diagnostics(server, rdp_settings, app_settings, command_in_path);
 
-    Command::new(&command.program)
-        .args(&command.args)
-        .spawn()
-        .map_err(|error| format!("Failed to launch {program}: {error}"))?;
-
-    Ok(())
+    Ok(spawn_with_diagnostics(diagnostics, command))
 }
 
 pub fn launch_tunnel_in_terminal(
@@ -401,17 +408,348 @@ pub fn launch_tunnel_in_terminal(
     identity_file: Option<&str>,
     tunnel: &Tunnel,
     settings: &AppSettings,
-) -> AppResult<()> {
-    let command =
-        build_tunnel_launch_command(server, identity_file, tunnel, settings, command_in_path)?;
-    let terminal = command.program.clone();
+) -> AppResult<LaunchDiagnostics> {
+    let (diagnostics, command) =
+        build_tunnel_launch_diagnostics(server, identity_file, tunnel, settings, command_in_path);
 
-    Command::new(&command.program)
-        .args(&command.args)
-        .spawn()
-        .map_err(|error| format!("Failed to launch {}: {error}", terminal_label(&terminal)))?;
+    Ok(spawn_with_diagnostics(diagnostics, command))
+}
 
-    Ok(())
+pub fn build_ssh_launch_diagnostics<F>(
+    server: &ServerProfile,
+    identity_file: Option<&str>,
+    settings: &AppSettings,
+    available: F,
+) -> (LaunchDiagnostics, Option<ProcessCommand>)
+where
+    F: Fn(&str) -> bool,
+{
+    let command_preview = build_ssh_argv(server, identity_file)
+        .map(|argv| format_argv_for_display(&argv))
+        .unwrap_or_default();
+    let command = build_launch_command(server, identity_file, settings, &available);
+
+    launch_diagnostics_for_terminal_command(
+        "ssh",
+        "ssh",
+        "SSH",
+        command_preview,
+        identity_file,
+        settings,
+        command,
+        &available,
+    )
+}
+
+pub fn build_sftp_launch_diagnostics<F>(
+    server: &ServerProfile,
+    identity_file: Option<&str>,
+    settings: &AppSettings,
+    available: F,
+) -> (LaunchDiagnostics, Option<ProcessCommand>)
+where
+    F: Fn(&str) -> bool,
+{
+    let command_preview = build_sftp_argv(server, identity_file)
+        .map(|argv| format_argv_for_display(&argv))
+        .unwrap_or_default();
+    let command = build_sftp_launch_command(server, identity_file, settings, &available);
+
+    launch_diagnostics_for_terminal_command(
+        "sftp",
+        "sftp",
+        "SFTP",
+        command_preview,
+        identity_file,
+        settings,
+        command,
+        &available,
+    )
+}
+
+pub fn build_tunnel_launch_diagnostics<F>(
+    server: &ServerProfile,
+    identity_file: Option<&str>,
+    tunnel: &Tunnel,
+    settings: &AppSettings,
+    available: F,
+) -> (LaunchDiagnostics, Option<ProcessCommand>)
+where
+    F: Fn(&str) -> bool,
+{
+    let command_preview = build_tunnel_argv(server, identity_file, tunnel)
+        .map(|argv| format_argv_for_display(&argv))
+        .unwrap_or_default();
+    let command = build_tunnel_launch_command(server, identity_file, tunnel, settings, &available);
+
+    launch_diagnostics_for_terminal_command(
+        "tunnel",
+        "ssh",
+        "SSH tunnel",
+        command_preview,
+        identity_file,
+        settings,
+        command,
+        &available,
+    )
+}
+
+pub fn build_rdp_launch_diagnostics<F>(
+    server: &ServerProfile,
+    rdp_settings: &RdpSettings,
+    app_settings: &AppSettings,
+    available: F,
+) -> (LaunchDiagnostics, Option<ProcessCommand>)
+where
+    F: Fn(&str) -> bool,
+{
+    let rdp_command = build_rdp_launch_command(server, rdp_settings, &available);
+    let command_preview = rdp_command
+        .as_ref()
+        .map(|process_command| process_command_to_display(process_command))
+        .unwrap_or_default();
+    let free_rdp_executable = rdp_command
+        .as_ref()
+        .ok()
+        .map(|process_command| process_command.program.clone());
+    let terminal_command = rdp_command.and_then(|rdp_command| {
+        let client = rdp_command.program.clone();
+        let rdp_argv = process_command_to_argv(&rdp_command);
+        let terminal = select_terminal(&app_settings.terminal_preference, &available)?;
+        let command = terminal_command_for(&terminal, &rdp_argv)?;
+        Ok((command, terminal, client))
+    });
+
+    match terminal_command {
+        Ok((process_command, terminal, client)) => {
+            (
+                LaunchDiagnostics {
+                    action_type: "rdp".to_string(),
+                    selected_terminal_or_client: Some(format!("{terminal} -> {client}")),
+                    executable: Some(terminal.clone()),
+                    command_preview,
+                    key_path: None,
+                    key_file_exists: None,
+                    public_key_path: None,
+                    public_key_file_exists: None,
+                    required_binaries: rdp_terminal_binary_statuses(&available),
+                    backend_result: "spawned".to_string(),
+                    message: format!(
+                        "SSH-Buddy started the external terminal process ({terminal}) for {client}. FreeRDP certificate and credential prompts should appear in that terminal. If no window appears or it closes immediately, copy the command below and run it manually to see the RDP error."
+                    ),
+                    free_rdp_executable: Some(client),
+                    launched_via_terminal: Some(true),
+                    certificate_mode: Some(rdp_settings.certificate_mode.clone()),
+                    rdp_username: rdp_settings.username.clone(),
+                    rdp_domain: rdp_settings.domain.clone(),
+                    rdp_port: Some(rdp_settings.port),
+                    rdp_multi_monitor: Some(rdp_settings.multi_monitor),
+                    rdp_monitor_ids: rdp_settings.monitor_ids.clone(),
+                },
+                Some(process_command),
+            )
+        }
+        Err(error) => (
+            LaunchDiagnostics {
+                action_type: "rdp".to_string(),
+                selected_terminal_or_client: None,
+                executable: None,
+                command_preview,
+                key_path: None,
+                key_file_exists: None,
+                public_key_path: None,
+                public_key_file_exists: None,
+                required_binaries: rdp_terminal_binary_statuses(&available),
+                backend_result: "preflightFailed".to_string(),
+                message: error,
+                free_rdp_executable,
+                launched_via_terminal: Some(false),
+                certificate_mode: Some(rdp_settings.certificate_mode.clone()),
+                rdp_username: rdp_settings.username.clone(),
+                rdp_domain: rdp_settings.domain.clone(),
+                rdp_port: Some(rdp_settings.port),
+                rdp_multi_monitor: Some(rdp_settings.multi_monitor),
+                rdp_monitor_ids: rdp_settings.monitor_ids.clone(),
+            },
+            None,
+        ),
+    }
+}
+
+fn launch_diagnostics_for_terminal_command<F>(
+    action_type: &str,
+    required_binary: &str,
+    action_label: &str,
+    command_preview: String,
+    identity_file: Option<&str>,
+    settings: &AppSettings,
+    command: AppResult<ProcessCommand>,
+    available: &F,
+) -> (LaunchDiagnostics, Option<ProcessCommand>)
+where
+    F: Fn(&str) -> bool,
+{
+    let key_details = key_diagnostics(identity_file);
+    let required_binaries = terminal_binary_statuses(required_binary, available);
+
+    match command {
+        Ok(process_command) => {
+            let terminal = process_command.program.clone();
+            (
+                LaunchDiagnostics {
+                    action_type: action_type.to_string(),
+                    selected_terminal_or_client: Some(terminal.clone()),
+                    executable: Some(terminal.clone()),
+                    command_preview,
+                    key_path: key_details.key_path,
+                    key_file_exists: key_details.key_file_exists,
+                    public_key_path: key_details.public_key_path,
+                    public_key_file_exists: key_details.public_key_file_exists,
+                    required_binaries,
+                    backend_result: "spawned".to_string(),
+                    message: format!(
+                        "SSH-Buddy started the external terminal process ({terminal}). If no window appears or it closes immediately, copy the command below and run it manually to see the {action_label} error."
+                    ),
+                    free_rdp_executable: None,
+                    launched_via_terminal: None,
+                    certificate_mode: None,
+                    rdp_username: None,
+                    rdp_domain: None,
+                    rdp_port: None,
+                    rdp_multi_monitor: None,
+                    rdp_monitor_ids: None,
+                },
+                Some(process_command),
+            )
+        }
+        Err(error) => (
+            LaunchDiagnostics {
+                action_type: action_type.to_string(),
+                selected_terminal_or_client: explicit_terminal_preference(settings),
+                executable: None,
+                command_preview,
+                key_path: key_details.key_path,
+                key_file_exists: key_details.key_file_exists,
+                public_key_path: key_details.public_key_path,
+                public_key_file_exists: key_details.public_key_file_exists,
+                required_binaries,
+                backend_result: "preflightFailed".to_string(),
+                message: error,
+                free_rdp_executable: None,
+                launched_via_terminal: None,
+                certificate_mode: None,
+                rdp_username: None,
+                rdp_domain: None,
+                rdp_port: None,
+                rdp_multi_monitor: None,
+                rdp_monitor_ids: None,
+            },
+            None,
+        ),
+    }
+}
+
+fn spawn_with_diagnostics(
+    mut diagnostics: LaunchDiagnostics,
+    command: Option<ProcessCommand>,
+) -> LaunchDiagnostics {
+    let Some(command) = command else {
+        return diagnostics;
+    };
+
+    if let Err(error) = Command::new(&command.program).args(&command.args).spawn() {
+        diagnostics.backend_result = "spawnFailed".to_string();
+        diagnostics.message = format!("Failed to launch {}: {error}", command.program);
+    }
+
+    diagnostics
+}
+
+struct KeyDiagnostics {
+    key_path: Option<String>,
+    key_file_exists: Option<bool>,
+    public_key_path: Option<String>,
+    public_key_file_exists: Option<bool>,
+}
+
+fn key_diagnostics(identity_file: Option<&str>) -> KeyDiagnostics {
+    let Some(identity_file) = identity_file.and_then(normalize_optional) else {
+        return KeyDiagnostics {
+            key_path: None,
+            key_file_exists: None,
+            public_key_path: None,
+            public_key_file_exists: None,
+        };
+    };
+
+    let expanded = expand_home_path(&identity_file);
+    let public_key_path = format!("{expanded}.pub");
+
+    KeyDiagnostics {
+        key_path: Some(expanded.clone()),
+        key_file_exists: Some(path_is_file(&expanded)),
+        public_key_path: Some(public_key_path.clone()),
+        public_key_file_exists: Some(path_is_file(&public_key_path)),
+    }
+}
+
+fn terminal_binary_statuses<F>(action_binary: &str, available: &F) -> Vec<LaunchBinaryStatus>
+where
+    F: Fn(&str) -> bool,
+{
+    let mut names = vec![action_binary.to_string()];
+    names.extend(
+        TERMINAL_ORDER
+            .iter()
+            .map(|terminal| (*terminal).to_string()),
+    );
+    names
+        .into_iter()
+        .map(|name| LaunchBinaryStatus {
+            exists: available(&name),
+            name,
+        })
+        .collect()
+}
+
+fn rdp_terminal_binary_statuses<F>(available: &F) -> Vec<LaunchBinaryStatus>
+where
+    F: Fn(&str) -> bool,
+{
+    let mut names = RDP_CLIENT_ORDER
+        .iter()
+        .map(|client| (*client).to_string())
+        .collect::<Vec<_>>();
+    names.extend(
+        TERMINAL_ORDER
+            .iter()
+            .map(|terminal| (*terminal).to_string()),
+    );
+    names
+        .into_iter()
+        .map(|name| LaunchBinaryStatus {
+            exists: available(&name),
+            name,
+        })
+        .collect()
+}
+
+fn explicit_terminal_preference(settings: &AppSettings) -> Option<String> {
+    if settings.terminal_preference == TERMINAL_PREFERENCE_AUTO {
+        None
+    } else {
+        Some(settings.terminal_preference.clone())
+    }
+}
+
+fn process_command_to_display(command: &ProcessCommand) -> String {
+    format_argv_for_display(&process_command_to_argv(command))
+}
+
+fn process_command_to_argv(command: &ProcessCommand) -> Vec<String> {
+    let mut argv = vec![command.program.clone()];
+    argv.extend(command.args.iter().cloned());
+    argv
 }
 
 pub fn build_launch_command<F>(
@@ -545,6 +883,12 @@ fn is_executable_file(path: &Path) -> bool {
     }
 }
 
+fn path_is_file(path: &str) -> bool {
+    fs::metadata(path)
+        .map(|metadata| metadata.is_file())
+        .unwrap_or(false)
+}
+
 fn expand_home_path(path: &str) -> String {
     expand_home_path_with(path, env::var_os("HOME"))
 }
@@ -667,6 +1011,7 @@ mod tests {
             username: Some("rdpuser".to_string()),
             domain: Some("LAB".to_string()),
             port: 3390,
+            certificate_mode: RDP_CERTIFICATE_MODE_TOFU.to_string(),
             fullscreen: false,
             multi_monitor: true,
             monitor_ids: Some("0,1".to_string()),
@@ -772,6 +1117,7 @@ mod tests {
             vec![
                 "xfreerdp3",
                 "/v:nas.local:3390",
+                "/cert:tofu",
                 "/u:rdpuser",
                 "/d:LAB",
                 "/multimon",
@@ -790,6 +1136,7 @@ mod tests {
         settings.username = None;
         settings.domain = None;
         settings.port = 3389;
+        settings.certificate_mode = RDP_CERTIFICATE_MODE_PROMPT.to_string();
         settings.fullscreen = true;
         settings.multi_monitor = false;
         settings.monitor_ids = None;
@@ -800,6 +1147,17 @@ mod tests {
         let argv = build_rdp_argv("xfreerdp", &sample_server(), &settings).unwrap();
 
         assert_eq!(argv, vec!["xfreerdp", "/v:nas.local:3389", "/f"]);
+    }
+
+    #[test]
+    fn builds_rdp_argv_with_ignore_certificate_mode() {
+        let mut settings = sample_rdp_settings();
+        settings.certificate_mode = RDP_CERTIFICATE_MODE_IGNORE.to_string();
+
+        let argv = build_rdp_argv("xfreerdp3", &sample_server(), &settings).unwrap();
+
+        assert!(argv.contains(&"/cert:ignore".to_string()));
+        assert!(!argv.iter().any(|arg| arg.starts_with("/p:")));
     }
 
     #[test]
@@ -861,7 +1219,7 @@ mod tests {
 
         assert_eq!(
             command,
-            "xfreerdp3 /v:nas.local:3390 '/u:Lab User' /d:LAB /multimon /monitors:0,1 /w:1920 /h:1080 /bpp:32"
+            "xfreerdp3 /v:nas.local:3390 /cert:tofu '/u:Lab User' /d:LAB /multimon /monitors:0,1 /w:1920 /h:1080 /bpp:32"
         );
     }
 
@@ -978,6 +1336,16 @@ mod tests {
             vec!["start", "--", "ssh", "nas.local"]
         );
         assert_eq!(
+            terminal_command_for("alacritty", &ssh_argv).unwrap(),
+            ProcessCommand {
+                program: "alacritty".to_string(),
+                args: vec!["-e", "ssh", "nas.local"]
+                    .into_iter()
+                    .map(String::from)
+                    .collect()
+            }
+        );
+        assert_eq!(
             terminal_command_for("gnome-terminal", &ssh_argv)
                 .unwrap()
                 .args,
@@ -1074,6 +1442,84 @@ mod tests {
     }
 
     #[test]
+    fn ssh_launch_diagnostics_include_command_key_and_binary_status() {
+        let dir = tempdir().unwrap();
+        let key_path = dir.path().join("id_ed25519");
+        let public_key_path = dir.path().join("id_ed25519.pub");
+        fs::write(&key_path, "not a real key").unwrap();
+        fs::write(&public_key_path, "not a real public key").unwrap();
+
+        let (diagnostics, command) = build_ssh_launch_diagnostics(
+            &sample_server(),
+            Some(key_path.to_str().unwrap()),
+            &sample_settings(),
+            |candidate| candidate == "ssh" || candidate == "konsole",
+        );
+
+        assert!(command.is_some());
+        assert_eq!(diagnostics.backend_result, "spawned");
+        assert_eq!(
+            diagnostics.selected_terminal_or_client,
+            Some("konsole".to_string())
+        );
+        assert_eq!(diagnostics.executable, Some("konsole".to_string()));
+        assert_eq!(diagnostics.key_file_exists, Some(true));
+        assert_eq!(diagnostics.public_key_file_exists, Some(true));
+        assert!(diagnostics.command_preview.starts_with("ssh -p 2222 -i "));
+        assert!(diagnostics
+            .required_binaries
+            .iter()
+            .any(|binary| binary.name == "ssh" && binary.exists));
+    }
+
+    #[test]
+    fn sftp_launch_diagnostics_report_missing_terminal() {
+        let (diagnostics, command) = build_sftp_launch_diagnostics(
+            &sample_server(),
+            None,
+            &sample_settings(),
+            |candidate| candidate == "sftp",
+        );
+
+        assert!(command.is_none());
+        assert_eq!(diagnostics.backend_result, "preflightFailed");
+        assert!(diagnostics.message.contains("No supported terminal found"));
+        assert!(diagnostics.command_preview.starts_with("sftp -P 2222"));
+        assert!(diagnostics
+            .required_binaries
+            .iter()
+            .any(|binary| binary.name == "sftp" && binary.exists));
+        assert!(diagnostics
+            .required_binaries
+            .iter()
+            .any(|binary| binary.name == "konsole" && !binary.exists));
+    }
+
+    #[test]
+    fn launch_diagnostics_report_missing_identity_file() {
+        let missing_key = "/tmp/ssh-buddy-missing-test-key";
+        let (diagnostics, command) = build_ssh_launch_diagnostics(
+            &sample_server(),
+            Some(missing_key),
+            &sample_settings(),
+            |candidate| candidate == "ssh" || candidate == "konsole",
+        );
+
+        assert!(command.is_none());
+        assert_eq!(diagnostics.backend_result, "preflightFailed");
+        assert!(diagnostics
+            .message
+            .contains("Selected SSH key file was not found"));
+        assert_eq!(diagnostics.key_path, Some(missing_key.to_string()));
+        assert_eq!(diagnostics.key_file_exists, Some(false));
+        assert_eq!(
+            diagnostics.public_key_path,
+            Some(format!("{missing_key}.pub"))
+        );
+        assert_eq!(diagnostics.public_key_file_exists, Some(false));
+    }
+
+    #[test]
     fn rdp_launch_preflight_builds_process_command() {
         let command =
             build_rdp_launch_command(&sample_server(), &sample_rdp_settings(), |candidate| {
@@ -1083,9 +1529,80 @@ mod tests {
 
         assert_eq!(command.program, "xfreerdp");
         assert_eq!(command.args[0], "/v:nas.local:3390");
+        assert!(command.args.contains(&"/cert:tofu".to_string()));
         assert!(command.args.contains(&"/u:rdpuser".to_string()));
         assert!(command.args.contains(&"/monitors:0,1".to_string()));
         assert!(!command.args.iter().any(|arg| arg.starts_with("/p:")));
+    }
+
+    #[test]
+    fn rdp_launch_diagnostics_wrap_free_rdp_in_terminal_for_prompts() {
+        let (diagnostics, command) = build_rdp_launch_diagnostics(
+            &sample_server(),
+            &sample_rdp_settings(),
+            &sample_settings(),
+            |candidate| candidate == "xfreerdp" || candidate == "konsole",
+        );
+        let command = command.unwrap();
+
+        assert_eq!(command.program, "konsole");
+        assert_eq!(command.args[0], "-e");
+        assert!(command.args.contains(&"xfreerdp".to_string()));
+        assert!(command.args.contains(&"/v:nas.local:3390".to_string()));
+        assert!(command.args.contains(&"/cert:tofu".to_string()));
+        assert_eq!(diagnostics.backend_result, "spawned");
+        assert_eq!(
+            diagnostics.selected_terminal_or_client,
+            Some("konsole -> xfreerdp".to_string())
+        );
+        assert_eq!(diagnostics.executable, Some("konsole".to_string()));
+        assert!(diagnostics.command_preview.starts_with("xfreerdp "));
+        assert_eq!(
+            diagnostics.free_rdp_executable,
+            Some("xfreerdp".to_string())
+        );
+        assert_eq!(diagnostics.launched_via_terminal, Some(true));
+        assert_eq!(diagnostics.certificate_mode, Some("tofu".to_string()));
+        assert_eq!(diagnostics.rdp_username, Some("rdpuser".to_string()));
+        assert_eq!(diagnostics.rdp_domain, Some("LAB".to_string()));
+        assert_eq!(diagnostics.rdp_port, Some(3390));
+        assert_eq!(diagnostics.rdp_multi_monitor, Some(true));
+        assert_eq!(diagnostics.rdp_monitor_ids, Some("0,1".to_string()));
+        assert!(diagnostics
+            .message
+            .contains("FreeRDP certificate and credential prompts"));
+        assert!(diagnostics
+            .required_binaries
+            .iter()
+            .any(|binary| binary.name == "xfreerdp" && binary.exists));
+        assert!(diagnostics
+            .required_binaries
+            .iter()
+            .any(|binary| binary.name == "konsole" && binary.exists));
+        assert!(!command.args.iter().any(|arg| arg.starts_with("/p:")));
+    }
+
+    #[test]
+    fn rdp_launch_diagnostics_report_missing_terminal() {
+        let (diagnostics, command) = build_rdp_launch_diagnostics(
+            &sample_server(),
+            &sample_rdp_settings(),
+            &sample_settings(),
+            |candidate| candidate == "xfreerdp",
+        );
+
+        assert!(command.is_none());
+        assert_eq!(diagnostics.backend_result, "preflightFailed");
+        assert!(diagnostics.message.contains("No supported terminal found"));
+        assert!(diagnostics.command_preview.starts_with("xfreerdp "));
+        assert!(diagnostics
+            .required_binaries
+            .iter()
+            .any(|binary| binary.name == "xfreerdp" && binary.exists));
+        assert!(diagnostics
+            .required_binaries
+            .iter()
+            .any(|binary| binary.name == "konsole" && !binary.exists));
     }
 
     #[test]

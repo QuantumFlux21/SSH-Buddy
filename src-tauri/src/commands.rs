@@ -5,8 +5,8 @@ use crate::{
     db::Database,
     domain::{
         AppResult, AppSettings, AppStateSnapshot, Group, GroupInput, ImportCandidate, ImportResult,
-        RdpSettings, RdpSettingsInput, ServerInput, ServerProfile, SshKeyInput, SshKeyRef, Tunnel,
-        TunnelInput, WebLink, WebLinkInput,
+        LaunchDiagnostics, RdpSettings, RdpSettingsInput, ServerInput, ServerProfile, SshKeyInput,
+        SshKeyRef, Tunnel, TunnelInput, WebLink, WebLinkInput,
     },
     launcher::{
         build_rdp_launch_command, build_sftp_argv, build_ssh_argv, build_tunnel_argv,
@@ -97,7 +97,7 @@ pub fn get_ssh_command(server_id: String, db: State<'_, Database>) -> AppResult<
 }
 
 #[tauri::command]
-pub fn launch_ssh(server_id: String, db: State<'_, Database>) -> AppResult<()> {
+pub fn launch_ssh(server_id: String, db: State<'_, Database>) -> AppResult<LaunchDiagnostics> {
     let server = db
         .get_server(&server_id)?
         .ok_or_else(|| "Server not found".to_string())?;
@@ -119,7 +119,7 @@ pub fn get_sftp_command(server_id: String, db: State<'_, Database>) -> AppResult
 }
 
 #[tauri::command]
-pub fn launch_sftp(server_id: String, db: State<'_, Database>) -> AppResult<()> {
+pub fn launch_sftp(server_id: String, db: State<'_, Database>) -> AppResult<LaunchDiagnostics> {
     let server = db
         .get_server(&server_id)?
         .ok_or_else(|| "Server not found".to_string())?;
@@ -166,15 +166,16 @@ pub fn get_rdp_command(server_id: String, db: State<'_, Database>) -> AppResult<
 }
 
 #[tauri::command]
-pub fn launch_rdp(server_id: String, db: State<'_, Database>) -> AppResult<()> {
+pub fn launch_rdp(server_id: String, db: State<'_, Database>) -> AppResult<LaunchDiagnostics> {
     let server = db
         .get_server(&server_id)?
         .ok_or_else(|| "Server not found".to_string())?;
     let settings = db
         .get_rdp_settings(&server_id)?
         .ok_or_else(|| "RDP is not configured for this server".to_string())?;
+    let app_settings = db.get_settings()?;
 
-    launch_rdp_client(&server, &settings)
+    launch_rdp_client(&server, &settings, &app_settings)
 }
 
 #[tauri::command]
@@ -222,7 +223,7 @@ pub fn launch_tunnel(
     server_id: String,
     tunnel_id: String,
     db: State<'_, Database>,
-) -> AppResult<()> {
+) -> AppResult<LaunchDiagnostics> {
     let server = db
         .get_server(&server_id)?
         .ok_or_else(|| "Server not found".to_string())?;
