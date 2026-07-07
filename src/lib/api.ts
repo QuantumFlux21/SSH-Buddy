@@ -88,8 +88,15 @@ function mockLaunchDiagnostics(actionType: string, commandPreview = ""): LaunchD
     rdpUsername: null,
     rdpDomain: null,
     rdpPort: null,
+    rdpFullscreen: null,
+    rdpWidth: null,
+    rdpHeight: null,
     rdpMultiMonitor: null,
     rdpMonitorIds: null,
+    rdpScalingMode: null,
+    rdpScalingPercent: null,
+    rdpSmartSizing: null,
+    rdpDynamicResolution: null,
   };
 }
 
@@ -284,6 +291,8 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
         width: input.width ?? null,
         height: input.height ?? null,
         colorDepth: input.colorDepth ?? null,
+        scalingMode: input.scalingMode ?? "native",
+        scalingPercent: input.scalingMode === "percentage" ? (input.scalingPercent ?? null) : null,
         createdAt: mockRdpSettings[serverId]?.createdAt ?? timestamp,
         updatedAt: timestamp,
       };
@@ -316,6 +325,15 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
       }
       if (settings.certificateMode === "ignore") {
         parts.push("/cert:ignore");
+      }
+      if (settings.scalingMode === "percentage" && settings.scalingPercent) {
+        parts.push(`/scale:${settings.scalingPercent}`);
+      }
+      if (settings.scalingMode === "smart-sizing") {
+        parts.push("/smart-sizing");
+      }
+      if (settings.scalingMode === "dynamic-resolution") {
+        parts.push("+dynamic-resolution");
       }
       if (settings.username) {
         parts.push(`/u:${settings.username}`);
@@ -355,7 +373,24 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
       if (!settings.enabled) {
         throw new Error("RDP is not enabled for this server");
       }
-      return mockLaunchDiagnostics("rdp") as T;
+      return {
+        ...mockLaunchDiagnostics("rdp"),
+        freeRdpExecutable: "xfreerdp3",
+        launchedViaTerminal: true,
+        certificateMode: settings.certificateMode,
+        rdpUsername: settings.username,
+        rdpDomain: settings.domain,
+        rdpPort: settings.port,
+        rdpFullscreen: settings.fullscreen,
+        rdpWidth: settings.width,
+        rdpHeight: settings.height,
+        rdpMultiMonitor: settings.multiMonitor,
+        rdpMonitorIds: settings.monitorIds,
+        rdpScalingMode: settings.scalingMode,
+        rdpScalingPercent: settings.scalingPercent,
+        rdpSmartSizing: settings.scalingMode === "smart-sizing",
+        rdpDynamicResolution: settings.scalingMode === "dynamic-resolution",
+      } as T;
     }
     case "list_tunnels": {
       const serverId = args?.serverId as string;

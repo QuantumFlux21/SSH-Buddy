@@ -29,6 +29,17 @@ pub const SUPPORTED_RDP_CERTIFICATE_MODES: &[&str] = &[
     RDP_CERTIFICATE_MODE_TOFU,
     RDP_CERTIFICATE_MODE_IGNORE,
 ];
+pub const RDP_SCALING_MODE_NATIVE: &str = "native";
+pub const RDP_SCALING_MODE_PERCENTAGE: &str = "percentage";
+pub const RDP_SCALING_MODE_SMART_SIZING: &str = "smart-sizing";
+pub const RDP_SCALING_MODE_DYNAMIC_RESOLUTION: &str = "dynamic-resolution";
+pub const SUPPORTED_RDP_SCALING_MODES: &[&str] = &[
+    RDP_SCALING_MODE_NATIVE,
+    RDP_SCALING_MODE_PERCENTAGE,
+    RDP_SCALING_MODE_SMART_SIZING,
+    RDP_SCALING_MODE_DYNAMIC_RESOLUTION,
+];
+pub const SUPPORTED_RDP_SCALING_PERCENTS: &[u16] = &[100, 140, 180];
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -102,6 +113,8 @@ pub struct RdpSettings {
     pub width: Option<u16>,
     pub height: Option<u16>,
     pub color_depth: Option<u16>,
+    pub scaling_mode: String,
+    pub scaling_percent: Option<u16>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -204,6 +217,8 @@ pub struct RdpSettingsInput {
     pub width: Option<u32>,
     pub height: Option<u32>,
     pub color_depth: Option<u32>,
+    pub scaling_mode: Option<String>,
+    pub scaling_percent: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -257,8 +272,15 @@ pub struct LaunchDiagnostics {
     pub rdp_username: Option<String>,
     pub rdp_domain: Option<String>,
     pub rdp_port: Option<u16>,
+    pub rdp_fullscreen: Option<bool>,
+    pub rdp_width: Option<u16>,
+    pub rdp_height: Option<u16>,
     pub rdp_multi_monitor: Option<bool>,
     pub rdp_monitor_ids: Option<String>,
+    pub rdp_scaling_mode: Option<String>,
+    pub rdp_scaling_percent: Option<u16>,
+    pub rdp_smart_sizing: Option<bool>,
+    pub rdp_dynamic_resolution: Option<bool>,
 }
 
 pub fn default_settings() -> AppSettings {
@@ -528,6 +550,7 @@ pub fn normalize_tunnel_bind_host(value: Option<String>) -> String {
 pub fn validate_rdp_settings_input(input: &RdpSettingsInput) -> AppResult<()> {
     validate_rdp_port(input.port.unwrap_or(u32::from(DEFAULT_RDP_PORT)))?;
     validate_rdp_certificate_mode(input.certificate_mode.as_deref())?;
+    validate_rdp_scaling(input.scaling_mode.as_deref(), input.scaling_percent)?;
 
     if let Some(username) = &input.username {
         validate_rdp_text_field(username, "RDP username")?;
@@ -572,6 +595,20 @@ pub fn normalize_rdp_certificate_mode(value: Option<String>) -> String {
         .unwrap_or_else(|| RDP_CERTIFICATE_MODE_PROMPT.to_string())
 }
 
+pub fn normalize_rdp_scaling_mode(value: Option<String>) -> String {
+    value
+        .and_then(|item| normalize_text(&item))
+        .unwrap_or_else(|| RDP_SCALING_MODE_NATIVE.to_string())
+}
+
+pub fn normalize_rdp_scaling_percent(mode: &str, value: Option<u32>) -> Option<u16> {
+    if mode == RDP_SCALING_MODE_PERCENTAGE {
+        value.and_then(|percent| u16::try_from(percent).ok())
+    } else {
+        None
+    }
+}
+
 fn validate_rdp_certificate_mode(value: Option<&str>) -> AppResult<()> {
     let mode = value
         .and_then(normalize_text)
@@ -581,6 +618,37 @@ fn validate_rdp_certificate_mode(value: Option<&str>) -> AppResult<()> {
         Ok(())
     } else {
         Err("RDP certificate mode must be prompt, tofu, or ignore".to_string())
+    }
+}
+
+fn validate_rdp_scaling(mode: Option<&str>, percent: Option<u32>) -> AppResult<()> {
+    let mode = mode
+        .and_then(normalize_text)
+        .unwrap_or_else(|| RDP_SCALING_MODE_NATIVE.to_string());
+
+    if !SUPPORTED_RDP_SCALING_MODES.contains(&mode.as_str()) {
+        return Err(
+            "RDP scaling mode must be native, percentage, smart-sizing, or dynamic-resolution"
+                .to_string(),
+        );
+    }
+
+    if mode != RDP_SCALING_MODE_PERCENTAGE {
+        if percent.is_some() {
+            return Err("RDP scaling percent is only valid for percentage scaling".to_string());
+        }
+        return Ok(());
+    }
+
+    let Some(percent) = percent else {
+        return Err("RDP scaling percent is required for percentage scaling".to_string());
+    };
+
+    if percent <= u32::from(u16::MAX) && SUPPORTED_RDP_SCALING_PERCENTS.contains(&(percent as u16))
+    {
+        Ok(())
+    } else {
+        Err("RDP scaling percent must be 100, 140, or 180".to_string())
     }
 }
 
@@ -780,6 +848,8 @@ mod tests {
             width: Some(1920),
             height: Some(1080),
             color_depth: Some(32),
+            scaling_mode: Some(RDP_SCALING_MODE_PERCENTAGE.to_string()),
+            scaling_percent: Some(140),
         }
     }
 
@@ -874,6 +944,36 @@ mod tests {
         assert_eq!(
             validate_rdp_settings_input(&input).unwrap_err(),
             "RDP certificate mode must be prompt, tofu, or ignore"
+        );
+
+        let mut input = valid_rdp_settings_input();
+        input.scaling_mode = Some("scale-everything".to_string());
+        assert_eq!(
+            validate_rdp_settings_input(&input).unwrap_err(),
+            "RDP scaling mode must be native, percentage, smart-sizing, or dynamic-resolution"
+        );
+
+        let mut input = valid_rdp_settings_input();
+        input.scaling_percent = Some(125);
+        assert_eq!(
+            validate_rdp_settings_input(&input).unwrap_err(),
+            "RDP scaling percent must be 100, 140, or 180"
+        );
+
+        let mut input = valid_rdp_settings_input();
+        input.scaling_mode = Some(RDP_SCALING_MODE_NATIVE.to_string());
+        input.scaling_percent = Some(140);
+        assert_eq!(
+            validate_rdp_settings_input(&input).unwrap_err(),
+            "RDP scaling percent is only valid for percentage scaling"
+        );
+
+        let mut input = valid_rdp_settings_input();
+        input.scaling_mode = Some(RDP_SCALING_MODE_PERCENTAGE.to_string());
+        input.scaling_percent = None;
+        assert_eq!(
+            validate_rdp_settings_input(&input).unwrap_err(),
+            "RDP scaling percent is required for percentage scaling"
         );
 
         let mut input = valid_rdp_settings_input();

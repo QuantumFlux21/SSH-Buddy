@@ -58,6 +58,8 @@ export interface RdpSettings {
   width: number | null;
   height: number | null;
   colorDepth: number | null;
+  scalingMode: RdpScalingMode;
+  scalingPercent: number | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -142,6 +144,8 @@ export interface RdpSettingsInput {
   width?: number | null;
   height?: number | null;
   colorDepth?: number | null;
+  scalingMode?: RdpScalingMode | null;
+  scalingPercent?: number | null;
 }
 
 export interface ImportCandidate {
@@ -187,8 +191,16 @@ export interface LaunchDiagnostics {
   rdpUsername: string | null;
   rdpDomain: string | null;
   rdpPort: number | null;
+  rdpFullscreen: boolean | null;
+  rdpWidth: number | null;
+  rdpHeight: number | null;
   rdpMultiMonitor: boolean | null;
   rdpMonitorIds: string | null;
+  rdpScalingMode: RdpScalingMode | string | null;
+  rdpScalingPercent: number | null;
+  rdpSmartSizing: boolean | null;
+  rdpDynamicResolution: boolean | null;
 }
 
 export type RdpCertificateMode = "prompt" | "tofu" | "ignore";
+export type RdpScalingMode = "native" | "percentage" | "smart-sizing" | "dynamic-resolution";

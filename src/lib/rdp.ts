@@ -1,4 +1,7 @@
-import type { RdpCertificateMode, RdpSettings, RdpSettingsInput } from "./types";
+import type { RdpCertificateMode, RdpScalingMode, RdpSettings, RdpSettingsInput } from "./types";
+
+export const RDP_SCALING_PERCENT_OPTIONS = ["100", "140", "180"] as const;
+export type RdpScalingPercentOption = (typeof RDP_SCALING_PERCENT_OPTIONS)[number];
 
 export interface RdpSettingsFormModel {
   enabled: boolean;
@@ -12,9 +15,13 @@ export interface RdpSettingsFormModel {
   width: string;
   height: string;
   colorDepth: "" | "16" | "24" | "32";
+  scalingMode: RdpScalingMode;
+  scalingPercent: "" | RdpScalingPercentOption;
 }
 
-export type RdpFormErrors = Partial<Record<"port" | "monitorIds" | "width" | "height" | "colorDepth", string>>;
+export type RdpFormErrors = Partial<
+  Record<"port" | "monitorIds" | "width" | "height" | "colorDepth" | "scalingPercent", string>
+>;
 
 export const newRdpSettingsDraft = (settings?: RdpSettings | null): RdpSettingsFormModel => ({
   enabled: settings?.enabled ?? true,
@@ -28,6 +35,10 @@ export const newRdpSettingsDraft = (settings?: RdpSettings | null): RdpSettingsF
   width: settings?.width ? String(settings.width) : "",
   height: settings?.height ? String(settings.height) : "",
   colorDepth: settings?.colorDepth ? (String(settings.colorDepth) as RdpSettingsFormModel["colorDepth"]) : "",
+  scalingMode: settings?.scalingMode ?? "native",
+  scalingPercent: settings?.scalingPercent
+    ? (String(settings.scalingPercent) as RdpSettingsFormModel["scalingPercent"])
+    : "140",
 });
 
 export function toRdpSettingsInput(form: RdpSettingsFormModel): RdpSettingsInput {
@@ -43,6 +54,8 @@ export function toRdpSettingsInput(form: RdpSettingsFormModel): RdpSettingsInput
     width: parseOptionalNumber(form.width),
     height: parseOptionalNumber(form.height),
     colorDepth: parseOptionalNumber(form.colorDepth),
+    scalingMode: form.scalingMode,
+    scalingPercent: form.scalingMode === "percentage" ? parseOptionalNumber(form.scalingPercent) : null,
   };
 }
 
@@ -72,6 +85,10 @@ export function validateRdpSettingsForm(form: RdpSettingsFormModel): RdpFormErro
     errors.colorDepth = "Color depth must be 16, 24, or 32.";
   }
 
+  if (form.scalingMode === "percentage" && !isRdpScalingPercentOption(form.scalingPercent)) {
+    errors.scalingPercent = "Scaling percent must be 100, 140, or 180.";
+  }
+
   const monitorIdsError = validateMonitorIds(form.monitorIds, form.multiMonitor);
   if (monitorIdsError) {
     errors.monitorIds = monitorIdsError;
@@ -87,6 +104,7 @@ export function hasRdpFormErrors(errors: RdpFormErrors) {
 export function rdpSettingsSummary(settings: RdpSettings) {
   const mode = settings.fullscreen ? "Fullscreen" : settings.width && settings.height ? `${settings.width}x${settings.height}` : "Windowed";
   const extras = [
+    rdpScalingSummary(settings),
     settings.multiMonitor ? "multi-monitor" : null,
     settings.monitorIds ? `monitors ${settings.monitorIds}` : null,
     settings.colorDepth ? `${settings.colorDepth} bpp` : null,
@@ -95,6 +113,32 @@ export function rdpSettingsSummary(settings: RdpSettings) {
     .join(", ");
 
   return extras ? `${mode}, ${extras}` : mode;
+}
+
+export function rdpScalingSummary(settings: Pick<RdpSettings, "scalingMode" | "scalingPercent">) {
+  switch (settings.scalingMode) {
+    case "percentage":
+      return settings.scalingPercent ? `scale ${settings.scalingPercent}%` : "scale percentage";
+    case "smart-sizing":
+      return "smart sizing";
+    case "dynamic-resolution":
+      return "dynamic resolution";
+    default:
+      return null;
+  }
+}
+
+export function rdpScalingModeLabel(mode: RdpScalingMode | string) {
+  switch (mode) {
+    case "percentage":
+      return "Scale percentage";
+    case "smart-sizing":
+      return "Smart sizing";
+    case "dynamic-resolution":
+      return "Dynamic resolution";
+    default:
+      return "Native / default";
+  }
 }
 
 export function rdpCertificateModeLabel(mode: RdpCertificateMode | string) {
@@ -131,6 +175,10 @@ function validateMonitorIds(value: string, multiMonitor: boolean) {
   }
 
   return null;
+}
+
+function isRdpScalingPercentOption(value: string): value is RdpScalingPercentOption {
+  return (RDP_SCALING_PERCENT_OPTIONS as readonly string[]).includes(value);
 }
 
 function parseOptionalNumber(value: string) {

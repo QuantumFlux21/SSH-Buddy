@@ -4,7 +4,14 @@ All notable changes to SSH-Buddy will be documented in this file.
 
 ## Unreleased
 
-No unreleased changes yet.
+### Added
+
+- RDP display/scaling settings with allowlisted FreeRDP options for native/default display, `/scale:100`, `/scale:140`, `/scale:180`, `/smart-sizing`, and `+dynamic-resolution`.
+- RDP launch diagnostics now include scaling mode, scaling percent, smart sizing, dynamic resolution, fullscreen, width, and height.
+
+### Changed
+
+- README troubleshooting now includes high-DPI RDP scaling guidance.
 
 ## 0.3.1 - 2026-07-07
 

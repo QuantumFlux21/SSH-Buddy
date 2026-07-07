@@ -8,8 +8,9 @@ use rusqlite::{params, Connection, OptionalExtension, Transaction};
 
 use crate::domain::{
     default_settings, new_id, normalize_notes, normalize_optional, normalize_rdp_certificate_mode,
-    normalize_rdp_monitor_ids, normalize_tag_names, normalize_text, normalize_tunnel_bind_host,
-    now_timestamp, validate_app_settings, validate_group_input, validate_rdp_settings_input,
+    normalize_rdp_monitor_ids, normalize_rdp_scaling_mode, normalize_rdp_scaling_percent,
+    normalize_tag_names, normalize_text, normalize_tunnel_bind_host, now_timestamp,
+    validate_app_settings, validate_group_input, validate_rdp_settings_input,
     validate_server_input, validate_ssh_key_input, validate_tunnel_input, validate_web_link_input,
     AppResult, AppSettings, Group, GroupInput, RdpSettings, RdpSettingsInput, ServerInput,
     ServerProfile, SshKeyInput, SshKeyRef, Tag, Tunnel, TunnelInput, WebLink, WebLinkInput,
@@ -45,6 +46,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
     (
         "008_rdp_certificate_mode",
         include_str!("../migrations/008_rdp_certificate_mode.sql"),
+    ),
+    (
+        "009_rdp_scaling_options",
+        include_str!("../migrations/009_rdp_scaling_options.sql"),
     ),
 ];
 
@@ -773,13 +778,15 @@ impl Database {
         let conn = self.lock()?;
         ensure_server_exists(&conn, server_id)?;
         let now = now_timestamp();
+        let scaling_mode = normalize_rdp_scaling_mode(input.scaling_mode.clone());
+        let scaling_percent = normalize_rdp_scaling_percent(&scaling_mode, input.scaling_percent);
         conn.execute(
             "
             INSERT INTO server_rdp_settings (
               server_profile_id, enabled, username, domain, port, certificate_mode,
               fullscreen, multi_monitor, monitor_ids, width, height, color_depth,
-              created_at, updated_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?13)
+              scaling_mode, scaling_percent, created_at, updated_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?15)
             ON CONFLICT(server_profile_id) DO UPDATE SET
               enabled = excluded.enabled,
               username = excluded.username,
@@ -792,6 +799,8 @@ impl Database {
               width = excluded.width,
               height = excluded.height,
               color_depth = excluded.color_depth,
+              scaling_mode = excluded.scaling_mode,
+              scaling_percent = excluded.scaling_percent,
               updated_at = excluded.updated_at
             ",
             params![
@@ -807,6 +816,8 @@ impl Database {
                 input.width.map(|value| value as i64),
                 input.height.map(|value| value as i64),
                 input.color_depth.map(|value| value as i64),
+                scaling_mode,
+                scaling_percent.map(|value| value as i64),
                 now,
             ],
         )
@@ -1114,7 +1125,8 @@ fn get_rdp_settings_by_server(
     conn.query_row(
         "
         SELECT server_profile_id, enabled, username, domain, port, fullscreen, multi_monitor,
-               monitor_ids, width, height, color_depth, certificate_mode, created_at, updated_at
+               monitor_ids, width, height, color_depth, certificate_mode, scaling_mode,
+               scaling_percent, created_at, updated_at
         FROM server_rdp_settings
         WHERE server_profile_id = ?1
         ",
@@ -1165,8 +1177,10 @@ fn rdp_settings_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RdpSetting
         height: row.get::<_, Option<i64>>(9)?.map(|value| value as u16),
         color_depth: row.get::<_, Option<i64>>(10)?.map(|value| value as u16),
         certificate_mode: row.get(11)?,
-        created_at: row.get(12)?,
-        updated_at: row.get(13)?,
+        scaling_mode: row.get(12)?,
+        scaling_percent: row.get::<_, Option<i64>>(13)?.map(|value| value as u16),
+        created_at: row.get(14)?,
+        updated_at: row.get(15)?,
     })
 }
 
@@ -1256,6 +1270,12 @@ mod tests {
             .unwrap());
         assert!(db
             .column_exists("server_rdp_settings", "certificate_mode")
+            .unwrap());
+        assert!(db
+            .column_exists("server_rdp_settings", "scaling_mode")
+            .unwrap());
+        assert!(db
+            .column_exists("server_rdp_settings", "scaling_percent")
             .unwrap());
     }
 
@@ -1371,6 +1391,8 @@ mod tests {
             width: Some(1920),
             height: Some(1080),
             color_depth: Some(32),
+            scaling_mode: Some("percentage".to_string()),
+            scaling_percent: Some(140),
         }
     }
 
@@ -1424,6 +1446,8 @@ mod tests {
         assert_eq!(created.width, Some(1920));
         assert_eq!(created.height, Some(1080));
         assert_eq!(created.color_depth, Some(32));
+        assert_eq!(created.scaling_mode, "percentage");
+        assert_eq!(created.scaling_percent, Some(140));
 
         let updated = db
             .save_rdp_settings(
@@ -1440,6 +1464,8 @@ mod tests {
                     width: None,
                     height: None,
                     color_depth: Some(24),
+                    scaling_mode: Some("native".to_string()),
+                    scaling_percent: None,
                 },
             )
             .unwrap();
@@ -1448,6 +1474,8 @@ mod tests {
         assert_eq!(updated.certificate_mode, "prompt");
         assert!(updated.fullscreen);
         assert_eq!(updated.color_depth, Some(24));
+        assert_eq!(updated.scaling_mode, "native");
+        assert_eq!(updated.scaling_percent, None);
 
         db.delete_rdp_settings(&server.id).unwrap();
         assert!(db.get_rdp_settings(&server.id).unwrap().is_none());
@@ -1512,6 +1540,21 @@ mod tests {
         assert_eq!(
             db.save_rdp_settings(&server.id, input).unwrap_err(),
             "RDP certificate mode must be prompt, tofu, or ignore"
+        );
+
+        let mut input = rdp_settings_input();
+        input.scaling_percent = Some(200);
+        assert_eq!(
+            db.save_rdp_settings(&server.id, input).unwrap_err(),
+            "RDP scaling percent must be 100, 140, or 180"
+        );
+
+        let mut input = rdp_settings_input();
+        input.scaling_mode = Some("dynamic-resolution".to_string());
+        input.scaling_percent = Some(140);
+        assert_eq!(
+            db.save_rdp_settings(&server.id, input).unwrap_err(),
+            "RDP scaling percent is only valid for percentage scaling"
         );
     }
 

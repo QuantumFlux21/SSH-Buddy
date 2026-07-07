@@ -146,6 +146,8 @@ If Konsole is unreliable on your session, set Settings -> Preferred terminal to 
 
 For RDP, SSH-Buddy launches FreeRDP through the selected external terminal so certificate and password prompts have a usable TTY. If RDP closes immediately, copy the RDP command and run it manually from a terminal.
 
+For high-DPI RDP sessions, configure RDP display/scaling on the server profile. The locally verified FreeRDP 3 options are native/default, `/scale:100`, `/scale:140`, `/scale:180`, `/smart-sizing`, and `+dynamic-resolution`. Start with `/scale:140` or `/scale:180` for high-DPI displays. Scaling support can vary by FreeRDP version, compositor, and desktop environment; if a mode behaves poorly, copy the RDP command and test it directly in a terminal.
+
 If FreeRDP reports "Monitor configuration has gaps" or multi-monitor launch fails, first disable Multi-monitor and confirm a single-monitor session works. KDE monitor layouts used with `/multimon` may need contiguous monitor geometry. Then try explicit Monitor IDs in SSH-Buddy, for example `0,1`, and compare against:
 
 ```sh
@@ -180,9 +182,9 @@ For compatibility, SFTP commands use `-P <port>` for non-default ports, `-i <ide
 
 ## RDP External Launch
 
-SSH-Buddy can store per-server RDP launch settings and start FreeRDP externally using `xfreerdp3` when available, then `xfreerdp`. Launch uses the selected external terminal so FreeRDP can prompt for certificate trust or credentials. RDP settings can include username, domain, port, certificate mode, fullscreen, multi-monitor, optional monitor IDs such as `0,1`, dimensions, and color depth.
+SSH-Buddy can store per-server RDP launch settings and start FreeRDP externally using `xfreerdp3` when available, then `xfreerdp`. Launch uses the selected external terminal so FreeRDP can prompt for certificate trust or credentials. RDP settings can include username, domain, port, certificate mode, fullscreen, multi-monitor, optional monitor IDs such as `0,1`, dimensions, color depth, and display/scaling mode.
 
-RDP commands are built from saved profile data only, for example `xfreerdp3 /v:host:3389 /cert:tofu /u:username`. Certificate mode can be default/prompt, trust on first use with `/cert:tofu`, or ignore with `/cert:ignore`. Trust on first use is recommended for many Windows RDP hosts with self-signed certificates. Ignore is less secure and is never selected silently. With multi-monitor enabled, SSH-Buddy passes `/multimon`; if monitor IDs are configured, it passes a validated value such as `/monitors:0,1`. SSH-Buddy never stores or passes `/p:` password arguments. FreeRDP prompts interactively for credentials when needed.
+RDP commands are built from saved profile data only, for example `xfreerdp3 /v:host:3389 /cert:tofu /scale:140 /u:username`. Certificate mode can be default/prompt, trust on first use with `/cert:tofu`, or ignore with `/cert:ignore`. Trust on first use is recommended for many Windows RDP hosts with self-signed certificates. Ignore is less secure and is never selected silently. Display/scaling modes are allowlisted to native/default, `/scale:100`, `/scale:140`, `/scale:180`, `/smart-sizing`, and `+dynamic-resolution`. With multi-monitor enabled, SSH-Buddy passes `/multimon`; if monitor IDs are configured, it passes a validated value such as `/monitors:0,1`. SSH-Buddy never stores or passes `/p:` password arguments. FreeRDP prompts interactively for credentials when needed.
 
 ## SSH Tunnels
 

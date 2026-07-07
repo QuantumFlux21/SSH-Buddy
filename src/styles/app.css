@@ -962,6 +962,15 @@ input[type="color"] {
   grid-column: span 2;
 }
 
+.form-section-title {
+  margin-top: 4px;
+  color: var(--text);
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
 .subform {
   display: grid;
   gap: 10px;

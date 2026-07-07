@@ -23,6 +23,13 @@ describe("RDP form helpers", () => {
     expect(validateRdpSettingsForm({ ...newRdpSettingsDraft(), colorDepth: "8" as "16" }).colorDepth).toBe(
       "Color depth must be 16, 24, or 32.",
     );
+    expect(validateRdpSettingsForm({ ...newRdpSettingsDraft(), scalingMode: "percentage", scalingPercent: "140" }).scalingPercent).toBeUndefined();
+    expect(validateRdpSettingsForm({ ...newRdpSettingsDraft(), scalingMode: "percentage", scalingPercent: "" }).scalingPercent).toBe(
+      "Scaling percent must be 100, 140, or 180.",
+    );
+    expect(
+      validateRdpSettingsForm({ ...newRdpSettingsDraft(), scalingMode: "percentage", scalingPercent: "125" as "140" }).scalingPercent,
+    ).toBe("Scaling percent must be 100, 140, or 180.");
     expect(validateRdpSettingsForm({ ...newRdpSettingsDraft(), multiMonitor: true, monitorIds: "0,1" }).monitorIds).toBeUndefined();
     expect(validateRdpSettingsForm({ ...newRdpSettingsDraft(), multiMonitor: true, monitorIds: "0, 1" }).monitorIds).toBe(
       "Monitor IDs must not contain whitespace.",
@@ -46,6 +53,8 @@ describe("RDP form helpers", () => {
       width: "1280",
       height: "720",
       colorDepth: "24",
+      scalingMode: "percentage",
+      scalingPercent: "140",
     });
 
     expect(input).toEqual({
@@ -60,8 +69,21 @@ describe("RDP form helpers", () => {
       width: 1280,
       height: 720,
       colorDepth: 24,
+      scalingMode: "percentage",
+      scalingPercent: 140,
     });
     expect("password" in input).toBe(false);
+  });
+
+  it("drops stale scaling percent outside percentage mode", () => {
+    const input = toRdpSettingsInput({
+      ...newRdpSettingsDraft(),
+      scalingMode: "dynamic-resolution",
+      scalingPercent: "140",
+    });
+
+    expect(input.scalingMode).toBe("dynamic-resolution");
+    expect(input.scalingPercent).toBeNull();
   });
 
   it("formats settings summaries", () => {
@@ -78,11 +100,13 @@ describe("RDP form helpers", () => {
       width: 1920,
       height: 1080,
       colorDepth: 32,
+      scalingMode: "percentage",
+      scalingPercent: 140,
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
     };
 
-    expect(rdpSettingsSummary(settings)).toBe("1920x1080, multi-monitor, monitors 0,1, 32 bpp");
+    expect(rdpSettingsSummary(settings)).toBe("1920x1080, scale 140%, multi-monitor, monitors 0,1, 32 bpp");
     expect(rdpCertificateModeLabel(settings.certificateMode)).toContain("less secure");
   });
 });

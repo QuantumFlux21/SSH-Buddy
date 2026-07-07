@@ -10,8 +10,9 @@ use crate::domain::{
     normalize_tunnel_bind_host, validate_proxy_jump, validate_rdp_monitor_ids,
     validate_tunnel_input, AppResult, AppSettings, LaunchBinaryStatus, LaunchDiagnostics,
     RdpSettings, ServerProfile, Tunnel, TunnelInput, RDP_CERTIFICATE_MODE_IGNORE,
-    RDP_CERTIFICATE_MODE_PROMPT, RDP_CERTIFICATE_MODE_TOFU, SUPPORTED_TERMINAL_PREFERENCES,
-    TERMINAL_PREFERENCE_AUTO,
+    RDP_CERTIFICATE_MODE_PROMPT, RDP_CERTIFICATE_MODE_TOFU, RDP_SCALING_MODE_DYNAMIC_RESOLUTION,
+    RDP_SCALING_MODE_NATIVE, RDP_SCALING_MODE_PERCENTAGE, RDP_SCALING_MODE_SMART_SIZING,
+    SUPPORTED_RDP_SCALING_PERCENTS, SUPPORTED_TERMINAL_PREFERENCES, TERMINAL_PREFERENCE_AUTO,
 };
 
 const TERMINAL_ORDER: &[&str] = &[
@@ -71,6 +72,7 @@ pub fn build_rdp_argv(
 
     let mut argv = vec![client.to_string(), format!("/v:{host}:{}", settings.port)];
     append_rdp_certificate_option(&mut argv, settings)?;
+    append_rdp_scaling_option(&mut argv, settings)?;
 
     if let Some(username) = settings.username.as_deref().and_then(normalize_optional) {
         argv.push(format!("/u:{username}"));
@@ -119,6 +121,36 @@ fn append_rdp_certificate_option(argv: &mut Vec<String>, settings: &RdpSettings)
             Ok(())
         }
         _ => Err("RDP certificate mode must be prompt, tofu, or ignore".to_string()),
+    }
+}
+
+fn append_rdp_scaling_option(argv: &mut Vec<String>, settings: &RdpSettings) -> AppResult<()> {
+    match settings.scaling_mode.as_str() {
+        RDP_SCALING_MODE_NATIVE => Ok(()),
+        RDP_SCALING_MODE_PERCENTAGE => {
+            let Some(percent) = settings.scaling_percent else {
+                return Err("RDP scaling percent is required for percentage scaling".to_string());
+            };
+
+            if !SUPPORTED_RDP_SCALING_PERCENTS.contains(&percent) {
+                return Err("RDP scaling percent must be 100, 140, or 180".to_string());
+            }
+
+            argv.push(format!("/scale:{percent}"));
+            Ok(())
+        }
+        RDP_SCALING_MODE_SMART_SIZING => {
+            argv.push("/smart-sizing".to_string());
+            Ok(())
+        }
+        RDP_SCALING_MODE_DYNAMIC_RESOLUTION => {
+            argv.push("+dynamic-resolution".to_string());
+            Ok(())
+        }
+        _ => Err(
+            "RDP scaling mode must be native, percentage, smart-sizing, or dynamic-resolution"
+                .to_string(),
+        ),
     }
 }
 
@@ -185,7 +217,38 @@ fn validate_rdp_settings_for_launch(settings: &RdpSettings) -> AppResult<()> {
         }
     }
 
+    validate_rdp_scaling_for_launch(settings)?;
+
     Ok(())
+}
+
+fn validate_rdp_scaling_for_launch(settings: &RdpSettings) -> AppResult<()> {
+    match settings.scaling_mode.as_str() {
+        RDP_SCALING_MODE_NATIVE
+        | RDP_SCALING_MODE_SMART_SIZING
+        | RDP_SCALING_MODE_DYNAMIC_RESOLUTION => {
+            if settings.scaling_percent.is_some() {
+                Err("RDP scaling percent is only valid for percentage scaling".to_string())
+            } else {
+                Ok(())
+            }
+        }
+        RDP_SCALING_MODE_PERCENTAGE => {
+            let Some(percent) = settings.scaling_percent else {
+                return Err("RDP scaling percent is required for percentage scaling".to_string());
+            };
+
+            if SUPPORTED_RDP_SCALING_PERCENTS.contains(&percent) {
+                Ok(())
+            } else {
+                Err("RDP scaling percent must be 100, 140, or 180".to_string())
+            }
+        }
+        _ => Err(
+            "RDP scaling mode must be native, percentage, smart-sizing, or dynamic-resolution"
+                .to_string(),
+        ),
+    }
 }
 
 fn validate_rdp_dimension_for_launch(value: u16, label: &str) -> AppResult<()> {
@@ -543,8 +606,19 @@ where
                     rdp_username: rdp_settings.username.clone(),
                     rdp_domain: rdp_settings.domain.clone(),
                     rdp_port: Some(rdp_settings.port),
+                    rdp_fullscreen: Some(rdp_settings.fullscreen),
+                    rdp_width: rdp_settings.width,
+                    rdp_height: rdp_settings.height,
                     rdp_multi_monitor: Some(rdp_settings.multi_monitor),
                     rdp_monitor_ids: rdp_settings.monitor_ids.clone(),
+                    rdp_scaling_mode: Some(rdp_settings.scaling_mode.clone()),
+                    rdp_scaling_percent: rdp_settings.scaling_percent,
+                    rdp_smart_sizing: Some(
+                        rdp_settings.scaling_mode == RDP_SCALING_MODE_SMART_SIZING,
+                    ),
+                    rdp_dynamic_resolution: Some(
+                        rdp_settings.scaling_mode == RDP_SCALING_MODE_DYNAMIC_RESOLUTION,
+                    ),
                 },
                 Some(process_command),
             )
@@ -568,8 +642,19 @@ where
                 rdp_username: rdp_settings.username.clone(),
                 rdp_domain: rdp_settings.domain.clone(),
                 rdp_port: Some(rdp_settings.port),
+                rdp_fullscreen: Some(rdp_settings.fullscreen),
+                rdp_width: rdp_settings.width,
+                rdp_height: rdp_settings.height,
                 rdp_multi_monitor: Some(rdp_settings.multi_monitor),
                 rdp_monitor_ids: rdp_settings.monitor_ids.clone(),
+                rdp_scaling_mode: Some(rdp_settings.scaling_mode.clone()),
+                rdp_scaling_percent: rdp_settings.scaling_percent,
+                rdp_smart_sizing: Some(
+                    rdp_settings.scaling_mode == RDP_SCALING_MODE_SMART_SIZING,
+                ),
+                rdp_dynamic_resolution: Some(
+                    rdp_settings.scaling_mode == RDP_SCALING_MODE_DYNAMIC_RESOLUTION,
+                ),
             },
             None,
         ),
@@ -616,8 +701,15 @@ where
                     rdp_username: None,
                     rdp_domain: None,
                     rdp_port: None,
+                    rdp_fullscreen: None,
+                    rdp_width: None,
+                    rdp_height: None,
                     rdp_multi_monitor: None,
                     rdp_monitor_ids: None,
+                    rdp_scaling_mode: None,
+                    rdp_scaling_percent: None,
+                    rdp_smart_sizing: None,
+                    rdp_dynamic_resolution: None,
                 },
                 Some(process_command),
             )
@@ -641,8 +733,15 @@ where
                 rdp_username: None,
                 rdp_domain: None,
                 rdp_port: None,
+                rdp_fullscreen: None,
+                rdp_width: None,
+                rdp_height: None,
                 rdp_multi_monitor: None,
                 rdp_monitor_ids: None,
+                rdp_scaling_mode: None,
+                rdp_scaling_percent: None,
+                rdp_smart_sizing: None,
+                rdp_dynamic_resolution: None,
             },
             None,
         ),
@@ -1018,6 +1117,8 @@ mod tests {
             width: Some(1920),
             height: Some(1080),
             color_depth: Some(32),
+            scaling_mode: RDP_SCALING_MODE_NATIVE.to_string(),
+            scaling_percent: None,
             created_at: "2026-01-01T00:00:00.000Z".to_string(),
             updated_at: "2026-01-01T00:00:00.000Z".to_string(),
         }
@@ -1161,6 +1262,29 @@ mod tests {
     }
 
     #[test]
+    fn builds_rdp_argv_with_scaling_modes() {
+        let mut settings = sample_rdp_settings();
+        settings.scaling_mode = RDP_SCALING_MODE_PERCENTAGE.to_string();
+        settings.scaling_percent = Some(140);
+
+        let argv = build_rdp_argv("xfreerdp3", &sample_server(), &settings).unwrap();
+
+        assert!(argv.contains(&"/scale:140".to_string()));
+        assert!(!argv.iter().any(|arg| arg.starts_with("/p:")));
+
+        settings.scaling_mode = RDP_SCALING_MODE_SMART_SIZING.to_string();
+        settings.scaling_percent = None;
+        let argv = build_rdp_argv("xfreerdp3", &sample_server(), &settings).unwrap();
+        assert!(argv.contains(&"/smart-sizing".to_string()));
+        assert!(!argv.iter().any(|arg| arg.starts_with("/scale:")));
+
+        settings.scaling_mode = RDP_SCALING_MODE_DYNAMIC_RESOLUTION.to_string();
+        let argv = build_rdp_argv("xfreerdp3", &sample_server(), &settings).unwrap();
+        assert!(argv.contains(&"+dynamic-resolution".to_string()));
+        assert!(!argv.iter().any(|arg| arg.starts_with("/p:")));
+    }
+
+    #[test]
     fn builds_tunnel_argv_with_local_forward() {
         let argv = build_tunnel_argv(&sample_server(), None, &sample_tunnel()).unwrap();
 
@@ -1289,6 +1413,36 @@ mod tests {
         assert_eq!(
             build_rdp_argv("xfreerdp3", &sample_server(), &settings).unwrap_err(),
             "RDP monitor IDs require multi-monitor"
+        );
+
+        let mut settings = sample_rdp_settings();
+        settings.scaling_mode = "stretch".to_string();
+        assert_eq!(
+            build_rdp_argv("xfreerdp3", &sample_server(), &settings).unwrap_err(),
+            "RDP scaling mode must be native, percentage, smart-sizing, or dynamic-resolution"
+        );
+
+        let mut settings = sample_rdp_settings();
+        settings.scaling_mode = RDP_SCALING_MODE_PERCENTAGE.to_string();
+        settings.scaling_percent = Some(125);
+        assert_eq!(
+            build_rdp_argv("xfreerdp3", &sample_server(), &settings).unwrap_err(),
+            "RDP scaling percent must be 100, 140, or 180"
+        );
+
+        let mut settings = sample_rdp_settings();
+        settings.scaling_mode = RDP_SCALING_MODE_PERCENTAGE.to_string();
+        settings.scaling_percent = None;
+        assert_eq!(
+            build_rdp_argv("xfreerdp3", &sample_server(), &settings).unwrap_err(),
+            "RDP scaling percent is required for percentage scaling"
+        );
+
+        let mut settings = sample_rdp_settings();
+        settings.scaling_percent = Some(140);
+        assert_eq!(
+            build_rdp_argv("xfreerdp3", &sample_server(), &settings).unwrap_err(),
+            "RDP scaling percent is only valid for percentage scaling"
         );
     }
 
@@ -1566,8 +1720,18 @@ mod tests {
         assert_eq!(diagnostics.rdp_username, Some("rdpuser".to_string()));
         assert_eq!(diagnostics.rdp_domain, Some("LAB".to_string()));
         assert_eq!(diagnostics.rdp_port, Some(3390));
+        assert_eq!(diagnostics.rdp_fullscreen, Some(false));
+        assert_eq!(diagnostics.rdp_width, Some(1920));
+        assert_eq!(diagnostics.rdp_height, Some(1080));
         assert_eq!(diagnostics.rdp_multi_monitor, Some(true));
         assert_eq!(diagnostics.rdp_monitor_ids, Some("0,1".to_string()));
+        assert_eq!(
+            diagnostics.rdp_scaling_mode,
+            Some(RDP_SCALING_MODE_NATIVE.to_string())
+        );
+        assert_eq!(diagnostics.rdp_scaling_percent, None);
+        assert_eq!(diagnostics.rdp_smart_sizing, Some(false));
+        assert_eq!(diagnostics.rdp_dynamic_resolution, Some(false));
         assert!(diagnostics
             .message
             .contains("FreeRDP certificate and credential prompts"));

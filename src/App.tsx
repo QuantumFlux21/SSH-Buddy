@@ -29,6 +29,7 @@ import {
   hasRdpFormErrors,
   newRdpSettingsDraft,
   rdpCertificateModeLabel,
+  rdpScalingModeLabel,
   rdpSettingsSummary,
   toRdpSettingsInput,
   validateRdpSettingsForm,
@@ -822,8 +823,15 @@ function LaunchDetailsPanel({ details }: { details: LaunchDiagnostics }) {
           <LaunchDetail label="RDP username" value={details.rdpUsername || "Prompt/default"} />
           <LaunchDetail label="RDP domain" value={details.rdpDomain || "Not set"} />
           <LaunchDetail label="RDP port" value={details.rdpPort ? String(details.rdpPort) : "Not set"} />
+          <LaunchDetail label="Fullscreen" value={formatMaybeBoolean(details.rdpFullscreen)} />
+          <LaunchDetail label="Width" value={details.rdpWidth ? String(details.rdpWidth) : "Not set"} />
+          <LaunchDetail label="Height" value={details.rdpHeight ? String(details.rdpHeight) : "Not set"} />
           <LaunchDetail label="Multi-monitor" value={formatMaybeBoolean(details.rdpMultiMonitor)} />
           <LaunchDetail label="Monitor IDs" value={details.rdpMonitorIds || "Not set"} />
+          <LaunchDetail label="Scaling mode" value={details.rdpScalingMode ? rdpScalingModeLabel(details.rdpScalingMode) : "Not set"} />
+          <LaunchDetail label="Scaling percent" value={details.rdpScalingPercent ? `${details.rdpScalingPercent}%` : "Not set"} />
+          <LaunchDetail label="Smart sizing" value={formatMaybeBoolean(details.rdpSmartSizing)} />
+          <LaunchDetail label="Dynamic resolution" value={formatMaybeBoolean(details.rdpDynamicResolution)} />
         </div>
       ) : null}
 
@@ -1388,6 +1396,42 @@ function RdpSettingsForm({
             </span>
           ) : null}
         </label>
+        <div className="form-section-title span-2">RDP display/scaling</div>
+        <label className="span-2">
+          Scaling mode
+          <select
+            value={draft.scalingMode}
+            onChange={(event) => update("scalingMode", event.target.value as RdpSettingsFormModel["scalingMode"])}
+          >
+            <option value="native">Native / default</option>
+            <option value="percentage">Scale percentage</option>
+            <option value="smart-sizing">Smart sizing</option>
+            <option value="dynamic-resolution">Dynamic resolution</option>
+          </select>
+          <span className="field-hint">
+            Scaling support depends on your FreeRDP version and desktop environment. For high-DPI displays, try 140% or 180%.
+          </span>
+        </label>
+        {draft.scalingMode === "percentage" ? (
+          <label>
+            Scale percentage
+            <select
+              value={draft.scalingPercent}
+              onChange={(event) => update("scalingPercent", event.target.value as RdpSettingsFormModel["scalingPercent"])}
+              aria-invalid={submitted && Boolean(errors.scalingPercent)}
+              aria-describedby={submitted && errors.scalingPercent ? "rdp-scaling-percent-error" : undefined}
+            >
+              <option value="100">100%</option>
+              <option value="140">140%</option>
+              <option value="180">180%</option>
+            </select>
+            {submitted && errors.scalingPercent ? (
+              <span className="field-error" id="rdp-scaling-percent-error">
+                {errors.scalingPercent}
+              </span>
+            ) : null}
+          </label>
+        ) : null}
         <label className="checkbox-field">
           <input type="checkbox" checked={draft.fullscreen} onChange={(event) => update("fullscreen", event.target.checked)} />
           Fullscreen
