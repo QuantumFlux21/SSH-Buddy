@@ -4,10 +4,17 @@ All notable changes to SSH-Buddy will be documented in this file.
 
 ## Unreleased
 
+No unreleased changes yet.
+
+## 0.6.0 - 2026-07-07
+
+Feature release for Konsole launch reliability and selected-server reachability checks.
+
 ### Added
 
 - Server reachability status lights in the left server list.
-- Selected-server reachability panel with ICMP ping details, primary TCP port checks, and in-memory latency samples.
+- Selected-server reachability panel with ICMP ping details, primary TCP port checks, and the ping/TCP online/degraded/offline status model.
+- Ping latency sparkline using recent in-memory samples.
 - Manual selected-host port scan for a small common-port allowlist.
 - Settings action to test the selected external terminal.
 

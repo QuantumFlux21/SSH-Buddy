@@ -1,6 +1,6 @@
 [package]
 name = "ssh-buddy"
-version = "0.5.0"
+version = "0.6.0"
 description = "A fast, modern SSH manager for homelab users."
 authors = ["ssh-buddy contributors"]
 edition = "2021"
