@@ -5,14 +5,16 @@ use crate::{
     db::Database,
     domain::{
         AppResult, AppSettings, AppStateSnapshot, Group, GroupInput, ImportCandidate, ImportResult,
-        LaunchDiagnostics, RdpSettings, RdpSettingsInput, ServerInput, ServerProfile, SshKeyInput,
-        SshKeyRef, Tunnel, TunnelInput, WebLink, WebLinkInput,
+        LaunchDiagnostics, PortScanReport, RdpSettings, RdpSettingsInput, ServerInput,
+        ServerProfile, ServerStatus, SshKeyInput, SshKeyRef, Tunnel, TunnelInput, WebLink,
+        WebLinkInput,
     },
     launcher::{
         build_install_public_key_argv, build_rdp_launch_command, build_sftp_argv, build_ssh_argv,
         build_tunnel_argv, format_argv_for_display, launch_install_public_key_in_terminal,
         launch_rdp as launch_rdp_client, launch_sftp_in_terminal, launch_ssh_in_terminal,
-        launch_tunnel_in_terminal, validate_public_key_file_path,
+        launch_tunnel_in_terminal, test_terminal as launch_terminal_test,
+        validate_public_key_file_path,
     },
 };
 
@@ -84,6 +86,12 @@ pub fn delete_ssh_key_ref(id: String, db: State<'_, Database>) -> AppResult<()> 
 #[tauri::command]
 pub fn save_settings(input: AppSettings, db: State<'_, Database>) -> AppResult<AppSettings> {
     db.save_settings(input)
+}
+
+#[tauri::command]
+pub fn test_terminal(db: State<'_, Database>) -> AppResult<LaunchDiagnostics> {
+    let settings = db.get_settings()?;
+    launch_terminal_test(&settings)
 }
 
 #[tauri::command]
@@ -262,6 +270,28 @@ pub fn launch_tunnel(
     let settings = db.get_settings()?;
 
     launch_tunnel_in_terminal(&server, identity_file.as_deref(), &tunnel, &settings)
+}
+
+#[tauri::command]
+pub fn check_server_status(server_id: String, db: State<'_, Database>) -> AppResult<ServerStatus> {
+    let server = db
+        .get_server(&server_id)?
+        .ok_or_else(|| "Server not found".to_string())?;
+    let rdp_settings = db.get_rdp_settings(&server_id)?;
+
+    Ok(crate::status::check_server_status(
+        &server,
+        rdp_settings.as_ref(),
+    )?)
+}
+
+#[tauri::command]
+pub fn scan_server_ports(server_id: String, db: State<'_, Database>) -> AppResult<PortScanReport> {
+    let server = db
+        .get_server(&server_id)?
+        .ok_or_else(|| "Server not found".to_string())?;
+
+    Ok(crate::status::scan_server_ports(&server)?)
 }
 
 #[tauri::command]

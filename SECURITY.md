@@ -18,6 +18,7 @@ Open a private security advisory on GitHub when the repository is public. Until 
 - Do not store RDP passwords.
 - Do not inject passwords into SSH, sudo, RDP, or remote shells.
 - Do not silently deploy SSH keys.
+- Do not run broad or background network scans.
 - Do not store FTP, RDP, or other remote-access passwords.
 - Keep command execution narrowly scoped and backend-owned.
 - Warn before risky features such as agent forwarding, root login, password storage, or automatic privileged commands.
@@ -45,6 +46,8 @@ SSH-Buddy must not automate sudo by storing or injecting sudo passwords. Normal 
 - RDP certificate handling is allowlisted to prompt/default, `/cert:tofu`, or `/cert:ignore`; ignore is marked less secure and is not selected silently.
 - RDP monitor selection is passed only as validated `/monitors:<ids>` values, and display/scaling options are limited to allowlisted FreeRDP flags.
 - Local SSH tunnels are launched with OpenSSH `-N -L` after validating bind host, remote host, and ports.
+- Reachability checks use system `ping` with fixed argv and TCP connect calls for the selected server only.
+- Manual port scan is selected-host only and limited to a small common-port allowlist.
 - Web/admin links must be `http://` or `https://` and must not contain embedded credentials.
 - Notes are plaintext local metadata and should not contain secrets.
 
@@ -70,6 +73,12 @@ RDP support delegates remote desktop behavior to FreeRDP through `xfreerdp3` or 
 
 RDP settings are separate from SSH/SFTP assumptions. SSH keys, ssh-agent, ProxyJump, and sudo/root workflows do not authenticate RDP.
 
+## Reachability and Port Scan Safety
+
+Status checks are manual for the selected server. SSH-Buddy may run `ping -c 4 -W 2 <host>` through argv APIs and performs TCP connect checks without using a shell. If ping is missing, blocked, or lacks permission, SSH-Buddy still performs the TCP check and reports the ping error.
+
+The manual port scan checks only the selected server and only a small built-in allowlist: 22, 80, 443, 3389, 5432, 6379, 8080, and 8443. SSH-Buddy does not scan subnets, expand port ranges, run background discovery, or store long-term monitoring history. Use this only on systems you own or administer.
+
 ## Local Metadata Storage
 
 SSH-Buddy stores local app metadata in `ssh-buddy.sqlite3` under the Tauri app data directory for the app identifier `io.github.quantumflux21.ssh-buddy`. This database is not an encrypted secret store. Delete the app data directory to reset local profiles, groups, tags, key references, ProxyJump values, tunnel profiles, RDP settings, web links, notes, and settings.
@@ -83,6 +92,7 @@ SSH-Buddy stores local app metadata in `ssh-buddy.sqlite3` under the Tauri app d
 - Does not store sudo passwords.
 - Does not inject passwords into SSH, sudo, remote shells, RDP, FTP, or web URLs.
 - Does not silently deploy SSH keys.
+- Does not run background subnet scans or broad network discovery.
 - Does not automate root login or privileged command execution.
 - Does not enable agent forwarding by default.
 - Does not implement FTP, FTPS, remote forwarding, SOCKS tunnels, embedded SFTP/RDP experiences, embedded terminal sessions, sync, or KeePassXC integration.

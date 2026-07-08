@@ -4,7 +4,21 @@ All notable changes to SSH-Buddy will be documented in this file.
 
 ## Unreleased
 
-No unreleased changes yet.
+### Added
+
+- Server reachability status lights in the left server list.
+- Selected-server reachability panel with ICMP ping details, primary TCP port checks, and in-memory latency samples.
+- Manual selected-host port scan for a small common-port allowlist.
+- Settings action to test the selected external terminal.
+
+### Changed
+
+- Konsole launch now uses `konsole --noclose -e ...` so SSH/SFTP/tunnel/RDP/install-key errors remain visible instead of closing immediately.
+- Launch diagnostics now include the full spawned argv preview in addition to the child command preview.
+
+### Security
+
+- Port scanning is manual, selected-host only, and limited to an allowlist. No subnet discovery, background network scanning, credential storage, or shell interpolation was added.
 
 ## 0.5.0 - 2026-07-07
 

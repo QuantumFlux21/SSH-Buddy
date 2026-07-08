@@ -7,10 +7,12 @@ import type {
   ImportCandidate,
   ImportResult,
   LaunchDiagnostics,
+  PortScanReport,
   RdpSettings,
   RdpSettingsInput,
   ServerInput,
   ServerProfile,
+  ServerStatus,
   SshKeyInput,
   SshKeyRef,
   Tag,
@@ -75,6 +77,7 @@ function mockLaunchDiagnostics(actionType: string, commandPreview = ""): LaunchD
     selectedTerminalOrClient: null,
     executable: null,
     commandPreview,
+    argvPreview: null,
     keyPath: null,
     keyFileExists: null,
     publicKeyPath: null,
@@ -101,6 +104,61 @@ function mockLaunchDiagnostics(actionType: string, commandPreview = ""): LaunchD
     targetHost: null,
     targetPort: null,
     proxyJump: null,
+  };
+}
+
+function mockServerStatus(server: ServerProfile): ServerStatus {
+  return {
+    serverId: server.id,
+    state: "unknown",
+    checkedAt: now(),
+    host: server.host,
+    primaryPort: server.port,
+    primaryService: "ssh",
+    ping: {
+      attempted: false,
+      available: false,
+      success: false,
+      packetLossPercent: null,
+      minMs: null,
+      avgMs: null,
+      maxMs: null,
+      mdevMs: null,
+      error: "Reachability checks require the Tauri desktop app.",
+    },
+    tcp: {
+      attempted: false,
+      success: false,
+      latencyMs: null,
+      error: "Reachability checks require the Tauri desktop app.",
+    },
+  };
+}
+
+function mockPortScan(server: ServerProfile): PortScanReport {
+  const labels: Record<number, string> = {
+    22: "SSH",
+    80: "HTTP",
+    443: "HTTPS",
+    3389: "RDP",
+    5432: "PostgreSQL",
+    6379: "Redis",
+    8080: "HTTP-alt",
+    8443: "HTTPS-alt",
+  };
+
+  return {
+    serverId: server.id,
+    host: server.host,
+    scannedAt: now(),
+    warning: "Selected-host scan only. Use this only for servers you own or administer.",
+    results: [22, 80, 443, 3389, 5432, 6379, 8080, 8443].map((port) => ({
+      port,
+      label: labels[port],
+      state: "error",
+      latencyMs: null,
+      error: "Port scans require the Tauri desktop app.",
+    })),
   };
 }
 
@@ -216,6 +274,11 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
     case "save_settings":
       mockState.settings = args?.input as AppSettings;
       return structuredClone(mockState.settings) as T;
+    case "test_terminal":
+      return {
+        ...mockLaunchDiagnostics("terminal-test", "printf 'SSH-Buddy terminal test\\n'"),
+        message: "Terminal testing requires the Tauri desktop app.",
+      } as T;
     case "get_ssh_command": {
       const server = mockState.servers.find((item) => item.id === args?.serverId);
       if (!server) {
@@ -541,6 +604,20 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
       }
       return mockLaunchDiagnostics("tunnel") as T;
     }
+    case "check_server_status": {
+      const server = mockState.servers.find((item) => item.id === args?.serverId);
+      if (!server) {
+        throw new Error("Server not found");
+      }
+      return mockServerStatus(server) as T;
+    }
+    case "scan_server_ports": {
+      const server = mockState.servers.find((item) => item.id === args?.serverId);
+      if (!server) {
+        throw new Error("Server not found");
+      }
+      return mockPortScan(server) as T;
+    }
     case "list_web_links": {
       const serverId = args?.serverId as string;
       if (!mockState.servers.some((server) => server.id === serverId)) {
@@ -637,6 +714,7 @@ export const api = {
   saveSshKey: (input: SshKeyInput) => call<SshKeyRef>("create_ssh_key_ref", { input }),
   deleteSshKey: (id: string) => call<void>("delete_ssh_key_ref", { id }),
   saveSettings: (input: AppSettings) => call<AppSettings>("save_settings", { input }),
+  testTerminal: () => call<LaunchDiagnostics>("test_terminal"),
   getSshCommand: (serverId: string) => call<string>("get_ssh_command", { serverId }),
   launchSsh: (serverId: string) => call<LaunchDiagnostics>("launch_ssh", { serverId }),
   getSftpCommand: (serverId: string) => call<string>("get_sftp_command", { serverId }),
@@ -654,6 +732,8 @@ export const api = {
   deleteTunnel: (id: string) => call<void>("delete_tunnel", { id }),
   getTunnelCommand: (serverId: string, tunnelId: string) => call<string>("get_tunnel_command", { serverId, tunnelId }),
   launchTunnel: (serverId: string, tunnelId: string) => call<LaunchDiagnostics>("launch_tunnel", { serverId, tunnelId }),
+  checkServerStatus: (serverId: string) => call<ServerStatus>("check_server_status", { serverId }),
+  scanServerPorts: (serverId: string) => call<PortScanReport>("scan_server_ports", { serverId }),
   listWebLinks: (serverId: string) => call<WebLink[]>("list_web_links", { serverId }),
   saveWebLink: (serverId: string, id: string | null, input: WebLinkInput) =>
     id ? call<WebLink>("update_web_link", { id, input }) : call<WebLink>("create_web_link", { serverId, input }),

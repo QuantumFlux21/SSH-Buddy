@@ -184,6 +184,14 @@ button {
   gap: 8px;
 }
 
+.server-row-title {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
 .server-row-name {
   overflow: hidden;
   color: inherit;
@@ -220,6 +228,51 @@ button {
   width: 10px;
   height: 10px;
   border-radius: 99px;
+}
+
+.status-dot {
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  border: 1px solid var(--line);
+  border-radius: 99px;
+  background: var(--subtle);
+  box-shadow: 0 0 0 3px rgba(97, 113, 134, 0.12);
+}
+
+.status-dot.online {
+  border-color: rgba(66, 211, 146, 0.6);
+  background: var(--accent);
+  box-shadow: 0 0 0 3px rgba(66, 211, 146, 0.12);
+}
+
+.status-dot.degraded {
+  border-color: rgba(242, 193, 78, 0.72);
+  background: var(--warning);
+  box-shadow: 0 0 0 3px rgba(242, 193, 78, 0.13);
+}
+
+.status-dot.offline {
+  border-color: rgba(255, 107, 107, 0.68);
+  background: var(--danger);
+  box-shadow: 0 0 0 3px rgba(255, 107, 107, 0.12);
+}
+
+.status-dot.checking {
+  border-color: rgba(77, 163, 255, 0.72);
+  background: var(--blue);
+  animation: status-pulse 1s ease-in-out infinite;
+}
+
+@keyframes status-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
 }
 
 .workspace {
@@ -587,6 +640,128 @@ button {
   padding: 5px 9px;
   font-size: 13px;
   font-weight: 700;
+}
+
+.status-panel {
+  display: grid;
+  gap: 13px;
+}
+
+.status-summary {
+  display: grid;
+  gap: 4px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: rgba(10, 15, 21, 0.52);
+  padding: 12px;
+}
+
+.status-summary strong {
+  font-size: 18px;
+}
+
+.status-summary span {
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.status-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.status-detail-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.status-metric {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: rgba(10, 15, 21, 0.38);
+  padding: 9px;
+}
+
+.status-metric span,
+.port-cell span,
+.port-cell small,
+.sparkline span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.status-metric strong,
+.port-cell strong {
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+
+.sparkline {
+  display: grid;
+  gap: 7px;
+  color: var(--accent);
+}
+
+.sparkline svg {
+  width: 100%;
+  height: 48px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: rgba(10, 15, 21, 0.45);
+}
+
+.sparkline.empty {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  color: var(--muted);
+}
+
+.port-scan-results {
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid var(--line-soft);
+  padding-top: 12px;
+}
+
+.compact-heading {
+  margin-bottom: 0;
+}
+
+.compact-heading h4 {
+  margin: 0;
+}
+
+.port-grid {
+  display: grid;
+  gap: 7px;
+}
+
+.port-cell {
+  display: grid;
+  gap: 3px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: rgba(10, 15, 21, 0.48);
+  padding: 9px;
+}
+
+.port-cell.open {
+  border-color: rgba(66, 211, 146, 0.28);
+}
+
+.port-cell.timeout {
+  border-color: rgba(242, 193, 78, 0.24);
+}
+
+.port-cell.error {
+  border-color: rgba(255, 107, 107, 0.22);
 }
 
 .planned-list {

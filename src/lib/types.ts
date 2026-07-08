@@ -178,6 +178,7 @@ export interface LaunchDiagnostics {
   selectedTerminalOrClient: string | null;
   executable: string | null;
   commandPreview: string;
+  argvPreview: string | null;
   keyPath: string | null;
   keyFileExists: boolean | null;
   publicKeyPath: string | null;
@@ -204,6 +205,54 @@ export interface LaunchDiagnostics {
   targetHost: string | null;
   targetPort: number | null;
   proxyJump: string | null;
+}
+
+export interface PingCheck {
+  attempted: boolean;
+  available: boolean;
+  success: boolean;
+  packetLossPercent: number | null;
+  minMs: number | null;
+  avgMs: number | null;
+  maxMs: number | null;
+  mdevMs: number | null;
+  error: string | null;
+}
+
+export interface TcpCheck {
+  attempted: boolean;
+  success: boolean;
+  latencyMs: number | null;
+  error: string | null;
+}
+
+export type ServerStatusState = "unknown" | "online" | "degraded" | "offline" | "checking" | string;
+
+export interface ServerStatus {
+  serverId: string;
+  state: ServerStatusState;
+  checkedAt: string;
+  host: string;
+  primaryPort: number;
+  primaryService: string;
+  ping: PingCheck;
+  tcp: TcpCheck;
+}
+
+export interface PortScanResult {
+  port: number;
+  label: string;
+  state: "open" | "closed" | "timeout" | "error" | string;
+  latencyMs: number | null;
+  error: string | null;
+}
+
+export interface PortScanReport {
+  serverId: string;
+  host: string;
+  scannedAt: string;
+  results: PortScanResult[];
+  warning: string;
 }
 
 export type RdpCertificateMode = "prompt" | "tofu" | "ignore";

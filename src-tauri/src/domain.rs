@@ -40,6 +40,9 @@ pub const SUPPORTED_RDP_SCALING_MODES: &[&str] = &[
     RDP_SCALING_MODE_DYNAMIC_RESOLUTION,
 ];
 pub const SUPPORTED_RDP_SCALING_PERCENTS: &[u16] = &[100, 140, 180];
+pub const SERVER_STATUS_ONLINE: &str = "online";
+pub const SERVER_STATUS_DEGRADED: &str = "degraded";
+pub const SERVER_STATUS_OFFLINE: &str = "offline";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -259,6 +262,7 @@ pub struct LaunchDiagnostics {
     pub selected_terminal_or_client: Option<String>,
     pub executable: Option<String>,
     pub command_preview: String,
+    pub argv_preview: Option<String>,
     pub key_path: Option<String>,
     pub key_file_exists: Option<bool>,
     pub public_key_path: Option<String>,
@@ -285,6 +289,62 @@ pub struct LaunchDiagnostics {
     pub target_host: Option<String>,
     pub target_port: Option<u16>,
     pub proxy_jump: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PingCheck {
+    pub attempted: bool,
+    pub available: bool,
+    pub success: bool,
+    pub packet_loss_percent: Option<f64>,
+    pub min_ms: Option<f64>,
+    pub avg_ms: Option<f64>,
+    pub max_ms: Option<f64>,
+    pub mdev_ms: Option<f64>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TcpCheck {
+    pub attempted: bool,
+    pub success: bool,
+    pub latency_ms: Option<f64>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerStatus {
+    pub server_id: String,
+    pub state: String,
+    pub checked_at: String,
+    pub host: String,
+    pub primary_port: u16,
+    pub primary_service: String,
+    pub ping: PingCheck,
+    pub tcp: TcpCheck,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PortScanResult {
+    pub port: u16,
+    pub label: String,
+    pub state: String,
+    pub latency_ms: Option<f64>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PortScanReport {
+    pub server_id: String,
+    pub host: String,
+    pub scanned_at: String,
+    pub results: Vec<PortScanResult>,
+    pub warning: String,
 }
 
 pub fn default_settings() -> AppSettings {

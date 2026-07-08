@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  Activity,
   Cable,
   Copy,
   Download,
@@ -10,6 +11,8 @@ import {
   Monitor,
   Pencil,
   Plus,
+  Radar,
+  RefreshCw,
   Search,
   Server,
   Settings,
@@ -66,8 +69,11 @@ import type {
   ImportCandidate,
   ImportResult,
   LaunchDiagnostics,
+  PortScanReport,
   RdpSettings,
   ServerProfile,
+  ServerStatus,
+  ServerStatusState,
   SshKeyInput,
   SshKeyRef,
   Tunnel,
@@ -100,6 +106,13 @@ export default function App() {
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [manualCopyCommand, setManualCopyCommand] = useState<string | null>(null);
   const [lastLaunchAttempt, setLastLaunchAttempt] = useState<LaunchDiagnostics | null>(null);
+  const [serverStatuses, setServerStatuses] = useState<Record<string, ServerStatus>>({});
+  const [statusSamples, setStatusSamples] = useState<Record<string, number[]>>({});
+  const [statusCheckingIds, setStatusCheckingIds] = useState<Record<string, boolean>>({});
+  const [portScans, setPortScans] = useState<Record<string, PortScanReport>>({});
+  const [portScanRunningId, setPortScanRunningId] = useState<string | null>(null);
+  const statusRequestSeq = useRef(0);
+  const portScanRequestSeq = useRef(0);
 
   async function loadState(nextSelectedId?: string | null) {
     setError(null);
@@ -225,6 +238,71 @@ export default function App() {
       throw new Error(details.message);
     }
     return details.message;
+  }
+
+  function recordStatusSample(serverId: string, status: ServerStatus) {
+    const sample = status.ping.avgMs ?? status.tcp.latencyMs;
+    if (sample === null || !Number.isFinite(sample)) {
+      return;
+    }
+
+    setStatusSamples((current) => {
+      const samples = [...(current[serverId] ?? []), sample].slice(-18);
+      return { ...current, [serverId]: samples };
+    });
+  }
+
+  async function refreshServerStatus(server: ServerProfile) {
+    const requestId = ++statusRequestSeq.current;
+    setError(null);
+    setStatusCheckingIds((current) => ({ ...current, [server.id]: true }));
+
+    try {
+      const status = await api.checkServerStatus(server.id);
+      if (requestId !== statusRequestSeq.current) {
+        return;
+      }
+      setServerStatuses((current) => ({ ...current, [server.id]: status }));
+      recordStatusSample(server.id, status);
+      setStatusMessage(`Status refreshed for ${server.displayName}.`);
+    } catch (cause: unknown) {
+      if (requestId === statusRequestSeq.current) {
+        setError(cause instanceof Error ? cause.message : String(cause));
+      }
+    } finally {
+      if (requestId === statusRequestSeq.current) {
+        setStatusCheckingIds((current) => ({ ...current, [server.id]: false }));
+      }
+    }
+  }
+
+  async function scanServerPorts(server: ServerProfile) {
+    const requestId = ++portScanRequestSeq.current;
+    setError(null);
+    setPortScanRunningId(server.id);
+
+    try {
+      const report = await api.scanServerPorts(server.id);
+      if (requestId !== portScanRequestSeq.current) {
+        return;
+      }
+      setPortScans((current) => ({ ...current, [server.id]: report }));
+      setStatusMessage(`Port scan finished for ${server.displayName}.`);
+    } catch (cause: unknown) {
+      if (requestId === portScanRequestSeq.current) {
+        setError(cause instanceof Error ? cause.message : String(cause));
+      }
+    } finally {
+      if (requestId === portScanRequestSeq.current) {
+        setPortScanRunningId(null);
+      }
+    }
+  }
+
+  async function testTerminal() {
+    await runAction("Testing terminal", async () => {
+      return launchStatus(await api.testTerminal());
+    });
   }
 
   async function saveServer(form: ServerFormModel) {
@@ -571,7 +649,10 @@ export default function App() {
               }}
             >
               <span className="server-row-top">
-                <span className="server-row-name">{server.displayName}</span>
+                <span className="server-row-title">
+                  <StatusDot state={statusStateFor(server.id, serverStatuses, statusCheckingIds)} />
+                  <span className="server-row-name">{server.displayName}</span>
+                </span>
                 {server.favorite ? <Star size={13} fill="currentColor" /> : null}
               </span>
               <span className="server-row-host">{serverDestination(server)}</span>
@@ -656,6 +737,13 @@ export default function App() {
             onResetRdp={resetRdpSettings}
             onCopyRdpCommand={copyRdpCommand}
             onLaunchRdp={launchRdp}
+            serverStatus={selectedServer ? (serverStatuses[selectedServer.id] ?? null) : null}
+            statusSamples={selectedServer ? (statusSamples[selectedServer.id] ?? []) : []}
+            statusChecking={selectedServer ? Boolean(statusCheckingIds[selectedServer.id]) : false}
+            portScan={selectedServer ? (portScans[selectedServer.id] ?? null) : null}
+            portScanRunning={selectedServer ? portScanRunningId === selectedServer.id : false}
+            onRefreshStatus={refreshServerStatus}
+            onScanPorts={scanServerPorts}
             keyRefs={snapshot.sshKeys}
             hasAnyServers={hasAnyServers}
             hasActiveServerFilter={hasActiveServerFilter}
@@ -724,6 +812,8 @@ export default function App() {
         {activeSection === "settings" ? (
           <SettingsPanel
             settings={snapshot.settings}
+            busy={isBusy}
+            onTestTerminal={testTerminal}
             onSave={async (settings) => {
               await runAction(
                 "Saving settings",
@@ -888,6 +978,13 @@ function LaunchDetailsPanel({ details }: { details: LaunchDiagnostics }) {
         </div>
       ) : null}
 
+      {details.argvPreview ? (
+        <div className="command-preview">
+          <span>Spawned argv preview</span>
+          <code>{details.argvPreview}</code>
+        </div>
+      ) : null}
+
       <div className="binary-status-list" aria-label="Required binary status">
         {details.requiredBinaries.map((binary) => (
           <span key={binary.name} className={binary.exists ? "binary-status ok" : "binary-status missing"}>
@@ -920,6 +1017,8 @@ function launchActionLabel(actionType: string) {
       return "Open SSH tunnel";
     case "rdp":
       return "Open RDP";
+    case "terminal-test":
+      return "Test terminal";
     default:
       return actionType;
   }
@@ -986,6 +1085,13 @@ function ServerDetails({
   onResetRdp,
   onCopyRdpCommand,
   onLaunchRdp,
+  serverStatus,
+  statusSamples,
+  statusChecking,
+  portScan,
+  portScanRunning,
+  onRefreshStatus,
+  onScanPorts,
   hasAnyServers,
   hasActiveServerFilter,
   onAddServer,
@@ -1033,6 +1139,13 @@ function ServerDetails({
   onResetRdp: (server: ServerProfile) => void;
   onCopyRdpCommand: (server: ServerProfile) => void;
   onLaunchRdp: (server: ServerProfile) => void;
+  serverStatus: ServerStatus | null;
+  statusSamples: number[];
+  statusChecking: boolean;
+  portScan: PortScanReport | null;
+  portScanRunning: boolean;
+  onRefreshStatus: (server: ServerProfile) => void;
+  onScanPorts: (server: ServerProfile) => void;
   hasAnyServers: boolean;
   hasActiveServerFilter: boolean;
   onAddServer: () => void;
@@ -1210,6 +1323,18 @@ function ServerDetails({
       </section>
 
       <aside className="detail-side">
+        <ServerStatusPanel
+          server={server}
+          status={serverStatus}
+          samples={statusSamples}
+          checking={statusChecking}
+          portScan={portScan}
+          portScanRunning={portScanRunning}
+          busy={busy}
+          onRefresh={onRefreshStatus}
+          onScanPorts={onScanPorts}
+        />
+
         <section className="panel">
           <div className="panel-heading">
             <h3>Tags</h3>
@@ -1243,6 +1368,220 @@ function ServerDetails({
       </aside>
     </div>
   );
+}
+
+function ServerStatusPanel({
+  server,
+  status,
+  samples,
+  checking,
+  portScan,
+  portScanRunning,
+  busy,
+  onRefresh,
+  onScanPorts,
+}: {
+  server: ServerProfile;
+  status: ServerStatus | null;
+  samples: number[];
+  checking: boolean;
+  portScan: PortScanReport | null;
+  portScanRunning: boolean;
+  busy: boolean;
+  onRefresh: (server: ServerProfile) => void;
+  onScanPorts: (server: ServerProfile) => void;
+}) {
+  const state = checking ? "checking" : (status?.state ?? "unknown");
+  const primaryPort = status?.primaryPort ?? server.port;
+
+  return (
+    <section className="panel status-panel">
+      <div className="panel-heading">
+        <div>
+          <h3>Reachability</h3>
+          <span>{status ? `Checked ${formatDateTime(status.checkedAt)}` : "Not checked yet"}</span>
+        </div>
+        <StatusDot state={state} />
+      </div>
+
+      <div className="status-summary">
+        <strong>{statusStateLabel(state)}</strong>
+        <span>
+          {server.host}:{primaryPort}
+          {status?.primaryService ? ` · ${status.primaryService.toUpperCase()}` : ""}
+        </span>
+      </div>
+
+      <div className="status-actions">
+        <button className="button compact" type="button" disabled={busy || checking} onClick={() => onRefresh(server)}>
+          <RefreshCw size={15} />
+          {checking ? "Checking" : "Refresh status"}
+        </button>
+        <button className="button compact" type="button" disabled={busy || portScanRunning} onClick={() => onScanPorts(server)}>
+          <Radar size={15} />
+          {portScanRunning ? "Scanning" : "Scan ports"}
+        </button>
+      </div>
+
+      <div className="status-detail-list">
+        <StatusMetric label="Ping" value={formatPingSummary(status)} />
+        <StatusMetric label="TCP connect" value={formatTcpSummary(status)} />
+        <StatusMetric label="Packet loss" value={formatPacketLoss(status)} />
+        <StatusMetric label="RTT min/avg/max/mdev" value={formatRtt(status)} />
+      </div>
+
+      <LatencySparkline samples={samples} />
+
+      {status?.ping.error ? <p className="field-hint">Ping: {status.ping.error}</p> : null}
+      {status?.tcp.error ? <p className="field-hint">TCP: {status.tcp.error}</p> : null}
+
+      {portScan ? (
+        <div className="port-scan-results">
+          <div className="panel-heading compact-heading">
+            <h4>Port scan</h4>
+            <span>{formatDateTime(portScan.scannedAt)}</span>
+          </div>
+          <p className="field-hint">{portScan.warning}</p>
+          <div className="port-grid">
+            {portScan.results.map((result) => (
+              <div className={`port-cell ${result.state}`} key={result.port}>
+                <span>
+                  {result.port} · {result.label}
+                </span>
+                <strong>{result.state}</strong>
+                {result.latencyMs !== null ? <small>{formatMs(result.latencyMs)}</small> : null}
+                {result.error ? <small>{result.error}</small> : null}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <p className="field-hint">Port scan checks a small selected-host allowlist only. Use it only for servers you own or administer.</p>
+      )}
+    </section>
+  );
+}
+
+function StatusMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="status-metric">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function StatusDot({ state }: { state: ServerStatusState }) {
+  return <span className={`status-dot ${state}`} title={statusStateLabel(state)} aria-label={`Status: ${statusStateLabel(state)}`} />;
+}
+
+function LatencySparkline({ samples }: { samples: number[] }) {
+  if (samples.length < 2) {
+    return (
+      <div className="sparkline empty">
+        <Activity size={16} />
+        <span>Latency history appears after multiple checks.</span>
+      </div>
+    );
+  }
+
+  const max = Math.max(...samples);
+  const min = Math.min(...samples);
+  const range = Math.max(max - min, 1);
+  const points = samples
+    .map((sample, index) => {
+      const x = samples.length === 1 ? 0 : (index / (samples.length - 1)) * 100;
+      const y = 34 - ((sample - min) / range) * 28;
+      return `${x.toFixed(2)},${y.toFixed(2)}`;
+    })
+    .join(" ");
+
+  return (
+    <div className="sparkline">
+      <svg viewBox="0 0 100 40" role="img" aria-label="Recent latency samples">
+        <polyline points={points} fill="none" stroke="currentColor" strokeWidth="2.5" vectorEffect="non-scaling-stroke" />
+      </svg>
+      <span>
+        Last {samples.length} samples · {formatMs(samples[samples.length - 1])}
+      </span>
+    </div>
+  );
+}
+
+function statusStateFor(
+  serverId: string,
+  statuses: Record<string, ServerStatus>,
+  checking: Record<string, boolean>,
+): ServerStatusState {
+  if (checking[serverId]) {
+    return "checking";
+  }
+
+  return statuses[serverId]?.state ?? "unknown";
+}
+
+function statusStateLabel(state: ServerStatusState) {
+  switch (state) {
+    case "online":
+      return "Online";
+    case "degraded":
+      return "Degraded";
+    case "offline":
+      return "Offline";
+    case "checking":
+      return "Checking";
+    case "unknown":
+      return "Unknown";
+    default:
+      return state;
+  }
+}
+
+function formatPingSummary(status: ServerStatus | null) {
+  if (!status) {
+    return "Not checked";
+  }
+  if (!status.ping.available) {
+    return "Unavailable";
+  }
+  if (!status.ping.attempted) {
+    return "Not attempted";
+  }
+  return status.ping.success ? `OK${status.ping.avgMs !== null ? ` · ${formatMs(status.ping.avgMs)}` : ""}` : "Failed";
+}
+
+function formatTcpSummary(status: ServerStatus | null) {
+  if (!status) {
+    return "Not checked";
+  }
+  return status.tcp.success ? `OK${status.tcp.latencyMs !== null ? ` · ${formatMs(status.tcp.latencyMs)}` : ""}` : "Failed";
+}
+
+function formatPacketLoss(status: ServerStatus | null) {
+  if (!status || status.ping.packetLossPercent === null) {
+    return "Not available";
+  }
+  return `${status.ping.packetLossPercent}%`;
+}
+
+function formatRtt(status: ServerStatus | null) {
+  if (!status || status.ping.minMs === null || status.ping.avgMs === null || status.ping.maxMs === null) {
+    return "Not available";
+  }
+  const mdev = status.ping.mdevMs ?? 0;
+  return `${formatMs(status.ping.minMs)} / ${formatMs(status.ping.avgMs)} / ${formatMs(status.ping.maxMs)} / ${formatMs(mdev)}`;
+}
+
+function formatMs(value: number) {
+  return `${value.toFixed(value >= 10 ? 0 : 1)} ms`;
+}
+
+function formatDateTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  return date.toLocaleString();
 }
 
 function Info({ label, value }: { label: string; value: string }) {
@@ -2390,9 +2729,13 @@ function KeysPanel({
 
 function SettingsPanel({
   settings,
+  busy,
+  onTestTerminal,
   onSave,
 }: {
   settings: AppSettings;
+  busy: boolean;
+  onTestTerminal: () => void;
   onSave: (settings: AppSettings) => void;
 }) {
   const [draft, setDraft] = useState(settings);
@@ -2431,9 +2774,15 @@ function SettingsPanel({
           />
           Show safety warnings for risky features
         </label>
-        <button className="button primary" type="submit">
-          Save settings
-        </button>
+        <div className="modal-actions">
+          <button className="button primary" type="submit" disabled={busy}>
+            Save settings
+          </button>
+          <button className="button" type="button" disabled={busy} onClick={onTestTerminal}>
+            <Terminal size={16} />
+            Test terminal
+          </button>
+        </div>
       </form>
 
       <section className="panel warning wide">

@@ -17,6 +17,7 @@ The core MVP is implemented:
 - External RDP launch and copyable RDP command generation through FreeRDP.
 - ProxyJump/bastion support through OpenSSH `-J`.
 - Saved local SSH tunnel profiles with copy and external-terminal launch actions.
+- Manual server reachability checks with status lights, ping/TCP details, and selected-host port scan.
 - Linux-first development flow, with CachyOS/KDE as the primary target environment.
 
 The project is pre-1.0. `v0.1.0` is the first public GitHub release, `v0.2.0` is the ProxyJump and local tunnel feature release, `v0.3.0` is the SFTP and RDP external launcher feature release, `v0.3.1` is a Linux desktop clipboard/RDP prompt bugfix release, `v0.4.0` is the RDP scaling feature release, and `v0.5.0` is the public key install feature release.
@@ -36,7 +37,7 @@ The project is pre-1.0. `v0.1.0` is the first public GitHub release, `v0.2.0` is
 - Does not automate sudo/root escalation.
 - Does not implement SSH cryptography itself.
 - Does not edit `~/.ssh/config`; import is preview-first and read-only.
-- Does not implement FTP, FTPS, VNC, remote forwarding, SOCKS tunnels, embedded SFTP/RDP experiences, embedded terminals, sync, or KeePassXC integration yet.
+- Does not implement FTP, FTPS, VNC, remote forwarding, SOCKS tunnels, embedded SFTP/RDP experiences, embedded terminals, sync, background subnet scanning, or KeePassXC integration yet.
 - Does not promise one universal release file for every operating system.
 
 ## Install From GitHub Releases
@@ -142,9 +143,11 @@ If a copy button fails, SSH-Buddy now shows the command in a manual-copy panel. 
 
 If Open SSH, Open SFTP, tunnel launch, or RDP launch appears to do nothing, check the "Last launch attempt" panel. It shows the action type, selected terminal/client, executable, command preview, key path checks, `.pub` file checks, required binary checks, and whether the backend result was preflight failed, spawn failed, or process spawned.
 
-On KDE/Wayland, the auto terminal path prefers Konsole when it is available and launches it with `konsole -e <command> <args...>`. If a Konsole window opens and closes immediately, the terminal process likely started but the child `ssh`/`sftp` command exited. Copy the command from SSH-Buddy and run it in an existing terminal to see the OpenSSH error directly.
+On KDE/Wayland, the auto terminal path prefers Konsole when it is available and launches it with `konsole --noclose -e <command> <args...>`. `--noclose` keeps the window available when the child command exits so SSH, SFTP, tunnel, RDP, or `ssh-copy-id` errors are visible. The "Last launch attempt" panel also shows the spawned argv preview so you can verify the exact terminal command SSH-Buddy attempted.
 
 If Konsole is unreliable on your session, set Settings -> Preferred terminal to Alacritty. Install Alacritty if needed, then retry Open SSH or Open SFTP. You can also manually run the copied SSH/SFTP command in any terminal.
+
+Use Settings -> Test terminal to launch a harmless fixed `printf` command with the selected terminal preference. This verifies terminal detection and argv construction without connecting to a server.
 
 For public key install, SSH-Buddy uses `ssh-copy-id` and the selected SSH key reference. The public key path is resolved as `<private-key-path>.pub`. If the `.pub` file is missing, create it with:
 
@@ -183,6 +186,20 @@ Server profiles can store an optional ProxyJump value. SSH-Buddy passes that val
 The SSH config import preview preserves detected `ProxyJump` values when selected candidates are imported. The preview still warns when a profile will use ProxyJump so the launch behavior is visible before import.
 
 SSH-Buddy does not enable agent forwarding, store jump host passwords, or automate root/sudo workflows.
+
+## Server Status and Port Scan
+
+SSH-Buddy can manually check reachability for the selected server. The left server list shows a status dot after a check has run:
+
+- Unknown: no check has run yet.
+- Online: ping and the primary TCP port both respond.
+- Degraded: ping works but the primary TCP port fails, or ping fails/is unavailable while TCP works.
+- Offline: both ping and the primary TCP port fail.
+- Checking: a manual check is currently running.
+
+The primary TCP port is the SSH port for normal SSH profiles. If RDP is enabled for the selected profile, the RDP port is used as the primary service port. Ping can be blocked by firewalls or unavailable in sandboxed environments, so SSH-Buddy always performs the TCP connect check as well.
+
+The Scan ports button is manual and selected-host only. It checks a small allowlist: 22, 80, 443, 3389, 5432, 6379, 8080, and 8443. SSH-Buddy does not scan subnets, discover networks, run background polling, or store monitoring history. Use port scan only on servers you own or administer.
 
 ## SFTP External Launch
 
@@ -226,7 +243,7 @@ SSH-Buddy uses system OpenSSH and existing SSH keys. It stores key labels, key p
 
 Normal terminal prompts remain the default for SSH passphrases, host key confirmation, passwords, public key install via `ssh-copy-id`, and `sudo`. Automatic password injection and privileged command automation are intentionally out of scope.
 
-Process execution is backend-owned. SSH, SFTP, public key install, RDP, and tunnel launch build argv arrays without shell string interpolation. SSH/SFTP/public-key-install/tunnel actions launch through supported terminals where appropriate; RDP launches FreeRDP through the selected external terminal so prompts have a usable TTY. ProxyJump, RDP settings, and tunnel values are validated before use. Web links are opened through the OS/browser opener after backend URL validation.
+Process execution is backend-owned. SSH, SFTP, public key install, RDP, tunnel launch, terminal tests, ping checks, and selected-host port checks build argv/process calls without shell string interpolation. SSH/SFTP/public-key-install/tunnel actions launch through supported terminals where appropriate; RDP launches FreeRDP through the selected external terminal so prompts have a usable TTY. ProxyJump, RDP settings, and tunnel values are validated before use. Web links are opened through the OS/browser opener after backend URL validation.
 
 ## Release Artifacts
 

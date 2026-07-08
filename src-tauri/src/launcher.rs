@@ -433,7 +433,7 @@ pub fn terminal_command_for(terminal: &str, command_argv: &[String]) -> AppResul
     }
 
     let mut args = match terminal {
-        "konsole" => vec!["-e".to_string()],
+        "konsole" => vec!["--noclose".to_string(), "-e".to_string()],
         "kitty" => Vec::new(),
         "alacritty" => vec!["-e".to_string()],
         "wezterm" => vec!["start".to_string(), "--".to_string()],
@@ -537,6 +537,12 @@ pub fn launch_tunnel_in_terminal(
     Ok(spawn_with_diagnostics(diagnostics, command))
 }
 
+pub fn test_terminal(settings: &AppSettings) -> AppResult<LaunchDiagnostics> {
+    let (diagnostics, command) = build_terminal_test_diagnostics(settings, command_in_path);
+
+    Ok(spawn_with_diagnostics(diagnostics, command))
+}
+
 pub fn build_ssh_launch_diagnostics<F>(
     server: &ServerProfile,
     identity_file: Option<&str>,
@@ -613,8 +619,9 @@ where
                 LaunchDiagnostics {
                     action_type: "install-public-key".to_string(),
                     selected_terminal_or_client: Some(terminal.clone()),
-                    executable: Some(terminal.clone()),
+                    executable: Some(executable_display(&terminal)),
                     command_preview,
+                    argv_preview: Some(process_command_to_display(&process_command)),
                     key_path: key_details.key_path,
                     key_file_exists: key_details.key_file_exists,
                     public_key_path: key_details.public_key_path,
@@ -653,6 +660,7 @@ where
                 selected_terminal_or_client: explicit_terminal_preference(settings),
                 executable: None,
                 command_preview,
+                argv_preview: None,
                 key_path: key_details.key_path,
                 key_file_exists: key_details.key_file_exists,
                 public_key_path: key_details.public_key_path,
@@ -744,8 +752,9 @@ where
                 LaunchDiagnostics {
                     action_type: "rdp".to_string(),
                     selected_terminal_or_client: Some(format!("{terminal} -> {client}")),
-                    executable: Some(terminal.clone()),
+                    executable: Some(executable_display(&terminal)),
                     command_preview,
+                    argv_preview: Some(process_command_to_display(&process_command)),
                     key_path: None,
                     key_file_exists: None,
                     public_key_path: None,
@@ -788,6 +797,7 @@ where
                 selected_terminal_or_client: None,
                 executable: None,
                 command_preview,
+                argv_preview: None,
                 key_path: None,
                 key_file_exists: None,
                 public_key_path: None,
@@ -824,6 +834,123 @@ where
     }
 }
 
+pub fn build_terminal_test_diagnostics<F>(
+    settings: &AppSettings,
+    available: F,
+) -> (LaunchDiagnostics, Option<ProcessCommand>)
+where
+    F: Fn(&str) -> bool,
+{
+    let command_preview = format_argv_for_display(&[
+        "printf".to_string(),
+        "SSH-Buddy terminal test\n".to_string(),
+    ]);
+    let command = build_terminal_test_command(settings, &available);
+    let required_binaries = terminal_binary_statuses("printf", &available);
+
+    match command {
+        Ok(process_command) => {
+            let terminal = process_command.program.clone();
+            (
+                LaunchDiagnostics {
+                    action_type: "terminal-test".to_string(),
+                    selected_terminal_or_client: Some(terminal.clone()),
+                    executable: Some(executable_display(&terminal)),
+                    command_preview,
+                    argv_preview: Some(process_command_to_display(&process_command)),
+                    key_path: None,
+                    key_file_exists: None,
+                    public_key_path: None,
+                    public_key_file_exists: None,
+                    required_binaries,
+                    backend_result: "spawned".to_string(),
+                    message: format!(
+                        "SSH-Buddy started the external terminal process ({terminal}) with a harmless printf command. Konsole should stay open because SSH-Buddy launches it with --noclose."
+                    ),
+                    free_rdp_executable: None,
+                    launched_via_terminal: None,
+                    certificate_mode: None,
+                    rdp_username: None,
+                    rdp_domain: None,
+                    rdp_port: None,
+                    rdp_fullscreen: None,
+                    rdp_width: None,
+                    rdp_height: None,
+                    rdp_multi_monitor: None,
+                    rdp_monitor_ids: None,
+                    rdp_scaling_mode: None,
+                    rdp_scaling_percent: None,
+                    rdp_smart_sizing: None,
+                    rdp_dynamic_resolution: None,
+                    target_username: None,
+                    target_host: None,
+                    target_port: None,
+                    proxy_jump: None,
+                },
+                Some(process_command),
+            )
+        }
+        Err(error) => (
+            LaunchDiagnostics {
+                action_type: "terminal-test".to_string(),
+                selected_terminal_or_client: explicit_terminal_preference(settings),
+                executable: None,
+                command_preview,
+                argv_preview: None,
+                key_path: None,
+                key_file_exists: None,
+                public_key_path: None,
+                public_key_file_exists: None,
+                required_binaries,
+                backend_result: "preflightFailed".to_string(),
+                message: error,
+                free_rdp_executable: None,
+                launched_via_terminal: None,
+                certificate_mode: None,
+                rdp_username: None,
+                rdp_domain: None,
+                rdp_port: None,
+                rdp_fullscreen: None,
+                rdp_width: None,
+                rdp_height: None,
+                rdp_multi_monitor: None,
+                rdp_monitor_ids: None,
+                rdp_scaling_mode: None,
+                rdp_scaling_percent: None,
+                rdp_smart_sizing: None,
+                rdp_dynamic_resolution: None,
+                target_username: None,
+                target_host: None,
+                target_port: None,
+                proxy_jump: None,
+            },
+            None,
+        ),
+    }
+}
+
+pub fn build_terminal_test_command<F>(
+    settings: &AppSettings,
+    available: F,
+) -> AppResult<ProcessCommand>
+where
+    F: Fn(&str) -> bool,
+{
+    if !available("printf") {
+        return Err(
+            "System tool 'printf' was not found in PATH. Cannot run terminal test.".to_string(),
+        );
+    }
+
+    let command_argv = vec![
+        "printf".to_string(),
+        "SSH-Buddy terminal test\n".to_string(),
+    ];
+    let terminal = select_terminal(&settings.terminal_preference, available)?;
+
+    terminal_command_for(&terminal, &command_argv)
+}
+
 fn launch_diagnostics_for_terminal_command<F>(
     action_type: &str,
     required_binary: &str,
@@ -847,8 +974,9 @@ where
                 LaunchDiagnostics {
                     action_type: action_type.to_string(),
                     selected_terminal_or_client: Some(terminal.clone()),
-                    executable: Some(terminal.clone()),
+                    executable: Some(executable_display(&terminal)),
                     command_preview,
+                    argv_preview: Some(process_command_to_display(&process_command)),
                     key_path: key_details.key_path,
                     key_file_exists: key_details.key_file_exists,
                     public_key_path: key_details.public_key_path,
@@ -887,6 +1015,7 @@ where
                 selected_terminal_or_client: explicit_terminal_preference(settings),
                 executable: None,
                 command_preview,
+                argv_preview: None,
                 key_path: key_details.key_path,
                 key_file_exists: key_details.key_file_exists,
                 public_key_path: key_details.public_key_path,
@@ -1145,14 +1274,28 @@ where
 }
 
 pub(crate) fn command_in_path(command: &str) -> bool {
+    command_path(command).is_some()
+}
+
+fn command_path(command: &str) -> Option<PathBuf> {
     let Some(path_var) = env::var_os("PATH") else {
-        return false;
+        return None;
     };
 
-    env::split_paths(&path_var).any(|path| {
+    env::split_paths(&path_var).find_map(|path| {
         let candidate = path.join(command);
-        is_executable_file(&candidate)
+        if is_executable_file(&candidate) {
+            Some(candidate)
+        } else {
+            None
+        }
     })
+}
+
+fn executable_display(program: &str) -> String {
+    command_path(program)
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_else(|| program.to_string())
 }
 
 fn is_executable_file(path: &Path) -> bool {
@@ -1759,7 +1902,7 @@ mod tests {
             terminal_command_for("konsole", &ssh_argv).unwrap(),
             ProcessCommand {
                 program: "konsole".to_string(),
-                args: vec!["-e", "ssh", "nas.local"]
+                args: vec!["--noclose", "-e", "ssh", "nas.local"]
                     .into_iter()
                     .map(String::from)
                     .collect()
@@ -1803,6 +1946,25 @@ mod tests {
             select_terminal("konsole", |_| false).unwrap_err(),
             "Preferred terminal 'Konsole' was not found in PATH"
         );
+    }
+
+    #[test]
+    fn builds_terminal_test_command_with_selected_terminal() {
+        let mut settings = sample_settings();
+        settings.terminal_preference = "konsole".to_string();
+
+        let command = build_terminal_test_command(&settings, |candidate| {
+            candidate == "printf" || candidate == "konsole"
+        })
+        .unwrap();
+
+        assert_eq!(command.program, "konsole");
+        assert_eq!(command.args[0], "--noclose");
+        assert_eq!(command.args[1], "-e");
+        assert!(command.args.contains(&"printf".to_string()));
+        assert!(command
+            .args
+            .contains(&"SSH-Buddy terminal test\n".to_string()));
     }
 
     #[test]
@@ -1953,7 +2115,14 @@ mod tests {
             diagnostics.selected_terminal_or_client,
             Some("konsole".to_string())
         );
-        assert_eq!(diagnostics.executable, Some("konsole".to_string()));
+        assert!(diagnostics
+            .executable
+            .as_deref()
+            .is_some_and(|value| value.ends_with("konsole")));
+        assert!(diagnostics
+            .argv_preview
+            .as_deref()
+            .is_some_and(|value| value.contains("--noclose -e ssh")));
         assert_eq!(diagnostics.key_file_exists, Some(true));
         assert_eq!(diagnostics.public_key_file_exists, Some(true));
         assert!(diagnostics.command_preview.starts_with("ssh -p 2222 -i "));
@@ -2079,7 +2248,8 @@ mod tests {
         let command = command.unwrap();
 
         assert_eq!(command.program, "konsole");
-        assert_eq!(command.args[0], "-e");
+        assert_eq!(command.args[0], "--noclose");
+        assert_eq!(command.args[1], "-e");
         assert!(command.args.contains(&"xfreerdp".to_string()));
         assert!(command.args.contains(&"/v:nas.local:3390".to_string()));
         assert!(command.args.contains(&"/cert:tofu".to_string()));
@@ -2088,7 +2258,14 @@ mod tests {
             diagnostics.selected_terminal_or_client,
             Some("konsole -> xfreerdp".to_string())
         );
-        assert_eq!(diagnostics.executable, Some("konsole".to_string()));
+        assert!(diagnostics
+            .executable
+            .as_deref()
+            .is_some_and(|value| value.ends_with("konsole")));
+        assert!(diagnostics
+            .argv_preview
+            .as_deref()
+            .is_some_and(|value| value.contains("--noclose -e xfreerdp")));
         assert!(diagnostics.command_preview.starts_with("xfreerdp "));
         assert_eq!(
             diagnostics.free_rdp_executable,
@@ -2176,7 +2353,8 @@ mod tests {
         .unwrap();
 
         assert_eq!(command.program, "konsole");
-        assert_eq!(command.args[0], "-e");
+        assert_eq!(command.args[0], "--noclose");
+        assert_eq!(command.args[1], "-e");
         assert!(command.args.contains(&"ssh".to_string()));
         assert!(command
             .args
