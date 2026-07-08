@@ -6,6 +6,23 @@ All notable changes to SSH-Buddy will be documented in this file.
 
 No unreleased changes yet.
 
+## 0.5.0 - 2026-07-07
+
+Feature release for installing public SSH keys with system OpenSSH tooling.
+
+### Added
+
+- Public key install action using system `ssh-copy-id` in an external terminal.
+- Copy install command action generated from saved server profile and SSH key reference data.
+- ProxyJump-aware public key install commands using `-o ProxyJump=<value>`.
+- Missing `.pub` diagnostics with a recovery command using `ssh-keygen -y -f <private-key> > <private-key>.pub`.
+- Launch diagnostics for public key install attempts, including public key path, target user/host/port, ProxyJump, command preview, required binary checks, and preflight status.
+
+### Security
+
+- Public key install uses the matching `<private-key-path>.pub` file only and never reads, stores, or copies private key contents.
+- Public key install requires explicit confirmation and does not store remote passwords, SSH key passphrases, or private key contents.
+
 ## 0.4.0 - 2026-07-07
 
 Feature release for RDP display/scaling options.

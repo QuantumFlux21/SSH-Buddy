@@ -940,6 +940,15 @@ input[type="color"] {
   color: var(--danger);
 }
 
+.confirm-body.neutral {
+  border-color: rgba(92, 169, 255, 0.24);
+  background: rgba(92, 169, 255, 0.08);
+}
+
+.confirm-body.neutral svg {
+  color: var(--blue);
+}
+
 .confirm-body p {
   margin: 0 0 6px;
 }

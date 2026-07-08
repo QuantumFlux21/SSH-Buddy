@@ -281,6 +281,10 @@ pub struct LaunchDiagnostics {
     pub rdp_scaling_percent: Option<u16>,
     pub rdp_smart_sizing: Option<bool>,
     pub rdp_dynamic_resolution: Option<bool>,
+    pub target_username: Option<String>,
+    pub target_host: Option<String>,
+    pub target_port: Option<u16>,
+    pub proxy_jump: Option<String>,
 }
 
 pub fn default_settings() -> AppSettings {

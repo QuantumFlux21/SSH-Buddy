@@ -12,13 +12,14 @@ The core MVP is implemented:
 - `~/.ssh/config` import preview and selected import.
 - External terminal SSH launch through system OpenSSH.
 - Copyable SSH command generation.
+- Public key install through system `ssh-copy-id` using saved SSH key references.
 - External terminal SFTP launch and copyable SFTP command generation through system OpenSSH.
 - External RDP launch and copyable RDP command generation through FreeRDP.
 - ProxyJump/bastion support through OpenSSH `-J`.
 - Saved local SSH tunnel profiles with copy and external-terminal launch actions.
 - Linux-first development flow, with CachyOS/KDE as the primary target environment.
 
-The project is pre-1.0. `v0.1.0` is the first public GitHub release, `v0.2.0` is the ProxyJump and local tunnel feature release, `v0.3.0` is the SFTP and RDP external launcher feature release, `v0.3.1` is a Linux desktop clipboard/RDP prompt bugfix release, and `v0.4.0` is the RDP scaling feature release.
+The project is pre-1.0. `v0.1.0` is the first public GitHub release, `v0.2.0` is the ProxyJump and local tunnel feature release, `v0.3.0` is the SFTP and RDP external launcher feature release, `v0.3.1` is a Linux desktop clipboard/RDP prompt bugfix release, `v0.4.0` is the RDP scaling feature release, and `v0.5.0` is the public key install feature release.
 
 ## Stack
 
@@ -31,6 +32,7 @@ The project is pre-1.0. `v0.1.0` is the first public GitHub release, `v0.2.0` is
 ## What SSH-Buddy Does Not Do
 
 - Does not store private key contents, SSH passwords, passphrases, sudo passwords, or remote passwords.
+- Does not silently deploy SSH keys.
 - Does not automate sudo/root escalation.
 - Does not implement SSH cryptography itself.
 - Does not edit `~/.ssh/config`; import is preview-first and read-only.
@@ -46,26 +48,26 @@ https://github.com/QuantumFlux21/SSH-Buddy/releases
 For Linux, download the AppImage, make it executable, and run it:
 
 ```sh
-chmod +x SSH-Buddy-v0.4.0-linux-amd64.AppImage
-./SSH-Buddy-v0.4.0-linux-amd64.AppImage
+chmod +x SSH-Buddy-v0.5.0-linux-amd64.AppImage
+./SSH-Buddy-v0.5.0-linux-amd64.AppImage
 ```
 
-Replace `v0.4.0` with the version you downloaded if you are installing a different release.
+Replace `v0.5.0` with the version you downloaded if you are installing a different release.
 
 The Linux AppImage expects the OpenSSH client and at least one supported external terminal in `PATH`: Konsole, kitty, Alacritty, WezTerm, GNOME Terminal, or xterm. Some distributions may also require AppImage/FUSE compatibility packages.
 
 On some Wayland/WebKitGTK sessions, use the DMA-BUF workaround:
 
 ```sh
-WEBKIT_DISABLE_DMABUF_RENDERER=1 ./SSH-Buddy-v0.4.0-linux-amd64.AppImage
+WEBKIT_DISABLE_DMABUF_RENDERER=1 ./SSH-Buddy-v0.5.0-linux-amd64.AppImage
 ```
 
-For Windows, download the NSIS installer named like `SSH-Buddy-v0.4.0-windows-x64-setup.exe`.
+For Windows, download the NSIS installer named like `SSH-Buddy-v0.5.0-windows-x64-setup.exe`.
 
 For macOS, download the `.dmg` that matches your CPU:
 
-- Apple Silicon: `SSH-Buddy-v0.4.0-darwin-aarch64.dmg`
-- Intel: `SSH-Buddy-v0.4.0-darwin-x64.dmg`
+- Apple Silicon: `SSH-Buddy-v0.5.0-darwin-aarch64.dmg`
+- Intel: `SSH-Buddy-v0.5.0-darwin-x64.dmg`
 
 Windows and macOS builds are currently unsigned. Windows SmartScreen, macOS Gatekeeper, and browser download warnings may appear. Proper Windows code signing and macOS signing/notarization are future release-hardening work.
 
@@ -76,7 +78,7 @@ Prerequisites:
 - Node.js 22 or newer.
 - Rust stable and Cargo.
 - Linux packages required by Tauri/WebKitGTK for your distribution.
-- OpenSSH client, including `ssh` and `sftp`.
+- OpenSSH client, including `ssh`, `sftp`, and `ssh-copy-id` if you want public key install actions.
 - FreeRDP `xfreerdp3` or `xfreerdp` if you want RDP launch actions.
 - At least one supported external terminal for SSH launch: Konsole, kitty, Alacritty, WezTerm, GNOME Terminal, or xterm.
 
@@ -144,6 +146,14 @@ On KDE/Wayland, the auto terminal path prefers Konsole when it is available and 
 
 If Konsole is unreliable on your session, set Settings -> Preferred terminal to Alacritty. Install Alacritty if needed, then retry Open SSH or Open SFTP. You can also manually run the copied SSH/SFTP command in any terminal.
 
+For public key install, SSH-Buddy uses `ssh-copy-id` and the selected SSH key reference. The public key path is resolved as `<private-key-path>.pub`. If the `.pub` file is missing, create it with:
+
+```sh
+ssh-keygen -y -f ~/.ssh/id_ed25519 > ~/.ssh/id_ed25519.pub
+```
+
+If `ssh-copy-id` is missing, install the OpenSSH package that provides it for your distribution. On many Linux systems it is included with OpenSSH client packages. If installation prompts for a password, enter the remote server user's password in the external terminal; SSH-Buddy does not store it. If login still fails with "Permission denied" after install, verify the server username, `~/.ssh/authorized_keys` permissions, server `sshd_config` public-key settings, and any ProxyJump/bastion configuration.
+
 For RDP, SSH-Buddy launches FreeRDP through the selected external terminal so certificate and password prompts have a usable TTY. If RDP closes immediately, copy the RDP command and run it manually from a terminal.
 
 For high-DPI RDP sessions, configure RDP display/scaling on the server profile. The locally verified FreeRDP 3 options are native/default, `/scale:100`, `/scale:140`, `/scale:180`, `/smart-sizing`, and `+dynamic-resolution`. Start with `/scale:140` or `/scale:180` for high-DPI displays. Scaling support can vary by FreeRDP version, compositor, and desktop environment; if a mode behaves poorly, copy the RDP command and test it directly in a terminal.
@@ -180,6 +190,24 @@ SSH-Buddy can launch the system OpenSSH `sftp` client in an external terminal fo
 
 For compatibility, SFTP commands use `-P <port>` for non-default ports, `-i <identity_file>` for selected key references, and `-o ProxyJump=<value>` for bastion hosts. SSH-Buddy does not store SFTP passwords or provide an embedded file browser yet; passphrase, password, and host-key prompts remain inside the external terminal/OpenSSH flow.
 
+## Install Public Key
+
+SSH-Buddy can install the matching public key for a saved SSH key reference on a selected server profile. The action uses system `ssh-copy-id` in the selected external terminal so remote password and host-key prompts stay interactive.
+
+SSH-Buddy stores the key path only. It does not import, copy, read, or store private key contents. For a key reference path such as `~/.ssh/id_ed25519_homelab`, SSH-Buddy resolves the public key path as `~/.ssh/id_ed25519_homelab.pub` and builds a command like:
+
+```sh
+ssh-copy-id -i ~/.ssh/id_ed25519_homelab.pub -p 22 user@host
+```
+
+If the server profile uses ProxyJump, SSH-Buddy passes it as a validated OpenSSH option:
+
+```sh
+ssh-copy-id -i ~/.ssh/id_ed25519_homelab.pub -p 22 -o ProxyJump=bastion user@host
+```
+
+The install action requires explicit confirmation before launch. SSH-Buddy does not store server passwords, SSH key passphrases, or sudo passwords, and it does not modify sudoers.
+
 ## RDP External Launch
 
 SSH-Buddy can store per-server RDP launch settings and start FreeRDP externally using `xfreerdp3` when available, then `xfreerdp`. Launch uses the selected external terminal so FreeRDP can prompt for certificate trust or credentials. RDP settings can include username, domain, port, certificate mode, fullscreen, multi-monitor, optional monitor IDs such as `0,1`, dimensions, color depth, and display/scaling mode.
@@ -196,9 +224,9 @@ Tunnel sessions stay open only while the external terminal process is running. T
 
 SSH-Buddy uses system OpenSSH and existing SSH keys. It stores key labels, key paths, optional fingerprints, and profile metadata only. Private key contents stay in user-controlled OpenSSH files, the OS, `ssh-agent`, or another user-controlled tool.
 
-Normal terminal prompts remain the default for SSH passphrases, host key confirmation, passwords, and `sudo`. Automatic password injection and privileged command automation are intentionally out of scope.
+Normal terminal prompts remain the default for SSH passphrases, host key confirmation, passwords, public key install via `ssh-copy-id`, and `sudo`. Automatic password injection and privileged command automation are intentionally out of scope.
 
-Process execution is backend-owned. SSH, SFTP, RDP, and tunnel launch build argv arrays without shell string interpolation. SSH/SFTP/tunnel actions launch through supported terminals where appropriate; RDP launches FreeRDP through the selected external terminal so prompts have a usable TTY. ProxyJump, RDP settings, and tunnel values are validated before use. Web links are opened through the OS/browser opener after backend URL validation.
+Process execution is backend-owned. SSH, SFTP, public key install, RDP, and tunnel launch build argv arrays without shell string interpolation. SSH/SFTP/public-key-install/tunnel actions launch through supported terminals where appropriate; RDP launches FreeRDP through the selected external terminal so prompts have a usable TTY. ProxyJump, RDP settings, and tunnel values are validated before use. Web links are opened through the OS/browser opener after backend URL validation.
 
 ## Release Artifacts
 
@@ -214,7 +242,7 @@ Windows and macOS builds are unsigned. Windows SmartScreen, macOS Gatekeeper, an
 
 ## Maintainer Release Process
 
-1. For the v0.4.0 release, confirm the version is `0.4.0` in `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, and `src-tauri/tauri.conf.json`. The release workflow artifact names use the app version, so do not tag `v0.4.0` while any of these files still say `0.3.1`.
+1. For the v0.5.0 release, confirm the version is `0.5.0` in `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, and `src-tauri/tauri.conf.json`. The release workflow artifact names use the app version, so do not tag `v0.5.0` while any of these files still say `0.4.0`.
 2. Run local checks:
 
 ```sh
@@ -229,8 +257,8 @@ cargo test
 4. Push the tag:
 
 ```sh
-git tag v0.4.0
-git push origin v0.4.0
+git tag v0.5.0
+git push origin v0.5.0
 ```
 
 5. Review the draft GitHub release generated by `.github/workflows/release.yml`.

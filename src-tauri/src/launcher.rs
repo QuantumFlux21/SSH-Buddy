@@ -58,6 +58,40 @@ pub fn build_sftp_argv(
     Ok(argv)
 }
 
+pub fn public_key_path_for_identity_file(identity_file: &str) -> AppResult<String> {
+    let Some(identity_file) = normalize_optional(identity_file) else {
+        return Err("SSH key reference path is required".to_string());
+    };
+
+    Ok(format!("{}.pub", expand_home_path(&identity_file)))
+}
+
+pub fn build_install_public_key_argv(
+    server: &ServerProfile,
+    identity_file: &str,
+) -> AppResult<Vec<String>> {
+    validate_install_public_key_profile(server)?;
+    let public_key_path = public_key_path_for_identity_file(identity_file)?;
+
+    let mut argv = vec![
+        "ssh-copy-id".to_string(),
+        "-i".to_string(),
+        public_key_path,
+        "-p".to_string(),
+        server.port.to_string(),
+    ];
+
+    if let Some(proxy_jump) = server.proxy_jump.as_deref().and_then(normalize_optional) {
+        validate_proxy_jump(&proxy_jump)?;
+        argv.push("-o".to_string());
+        argv.push(format!("ProxyJump={proxy_jump}"));
+    }
+
+    argv.push(destination_for(server));
+
+    Ok(argv)
+}
+
 pub fn build_rdp_argv(
     client: &str,
     server: &ServerProfile,
@@ -181,6 +215,16 @@ fn validate_server_profile_for_launch(server: &ServerProfile) -> AppResult<()> {
 
     if server.port == 0 {
         return Err("Server profile port must be between 1 and 65535".to_string());
+    }
+
+    Ok(())
+}
+
+fn validate_install_public_key_profile(server: &ServerProfile) -> AppResult<()> {
+    validate_server_profile_for_launch(server)?;
+
+    if server.username.trim().is_empty() {
+        return Err("Username is required to install a public key".to_string());
     }
 
     Ok(())
@@ -455,6 +499,21 @@ pub fn launch_sftp_in_terminal(
     Ok(spawn_with_diagnostics(diagnostics, command))
 }
 
+pub fn launch_install_public_key_in_terminal(
+    server: &ServerProfile,
+    identity_file: &str,
+    settings: &AppSettings,
+) -> AppResult<LaunchDiagnostics> {
+    let (diagnostics, command) = build_install_public_key_launch_diagnostics(
+        server,
+        identity_file,
+        settings,
+        command_in_path,
+    );
+
+    Ok(spawn_with_diagnostics(diagnostics, command))
+}
+
 pub fn launch_rdp(
     server: &ServerProfile,
     rdp_settings: &RdpSettings,
@@ -528,6 +587,102 @@ where
         command,
         &available,
     )
+}
+
+pub fn build_install_public_key_launch_diagnostics<F>(
+    server: &ServerProfile,
+    identity_file: &str,
+    settings: &AppSettings,
+    available: F,
+) -> (LaunchDiagnostics, Option<ProcessCommand>)
+where
+    F: Fn(&str) -> bool,
+{
+    let command_preview = build_install_public_key_argv(server, identity_file)
+        .map(|argv| format_argv_for_display(&argv))
+        .unwrap_or_default();
+    let command =
+        build_install_public_key_launch_command(server, identity_file, settings, &available);
+    let key_details = key_diagnostics(Some(identity_file));
+    let required_binaries = terminal_binary_statuses("ssh-copy-id", &available);
+
+    match command {
+        Ok(process_command) => {
+            let terminal = process_command.program.clone();
+            (
+                LaunchDiagnostics {
+                    action_type: "install-public-key".to_string(),
+                    selected_terminal_or_client: Some(terminal.clone()),
+                    executable: Some(terminal.clone()),
+                    command_preview,
+                    key_path: key_details.key_path,
+                    key_file_exists: key_details.key_file_exists,
+                    public_key_path: key_details.public_key_path,
+                    public_key_file_exists: key_details.public_key_file_exists,
+                    required_binaries,
+                    backend_result: "spawned".to_string(),
+                    message: format!(
+                        "SSH-Buddy started the external terminal process ({terminal}) for ssh-copy-id. Password and host-key prompts will appear in that terminal. If no window appears or it closes immediately, copy the command below and run it manually to see the ssh-copy-id error."
+                    ),
+                    free_rdp_executable: None,
+                    launched_via_terminal: None,
+                    certificate_mode: None,
+                    rdp_username: None,
+                    rdp_domain: None,
+                    rdp_port: None,
+                    rdp_fullscreen: None,
+                    rdp_width: None,
+                    rdp_height: None,
+                    rdp_multi_monitor: None,
+                    rdp_monitor_ids: None,
+                    rdp_scaling_mode: None,
+                    rdp_scaling_percent: None,
+                    rdp_smart_sizing: None,
+                    rdp_dynamic_resolution: None,
+                    target_username: normalize_optional(server.username.as_str()),
+                    target_host: normalize_optional(server.host.as_str()),
+                    target_port: Some(server.port),
+                    proxy_jump: server.proxy_jump.clone(),
+                },
+                Some(process_command),
+            )
+        }
+        Err(error) => (
+            LaunchDiagnostics {
+                action_type: "install-public-key".to_string(),
+                selected_terminal_or_client: explicit_terminal_preference(settings),
+                executable: None,
+                command_preview,
+                key_path: key_details.key_path,
+                key_file_exists: key_details.key_file_exists,
+                public_key_path: key_details.public_key_path,
+                public_key_file_exists: key_details.public_key_file_exists,
+                required_binaries,
+                backend_result: "preflightFailed".to_string(),
+                message: error,
+                free_rdp_executable: None,
+                launched_via_terminal: None,
+                certificate_mode: None,
+                rdp_username: None,
+                rdp_domain: None,
+                rdp_port: None,
+                rdp_fullscreen: None,
+                rdp_width: None,
+                rdp_height: None,
+                rdp_multi_monitor: None,
+                rdp_monitor_ids: None,
+                rdp_scaling_mode: None,
+                rdp_scaling_percent: None,
+                rdp_smart_sizing: None,
+                rdp_dynamic_resolution: None,
+                target_username: normalize_optional(server.username.as_str()),
+                target_host: normalize_optional(server.host.as_str()),
+                target_port: Some(server.port),
+                proxy_jump: server.proxy_jump.clone(),
+            },
+            None,
+        ),
+    }
 }
 
 pub fn build_tunnel_launch_diagnostics<F>(
@@ -619,6 +774,10 @@ where
                     rdp_dynamic_resolution: Some(
                         rdp_settings.scaling_mode == RDP_SCALING_MODE_DYNAMIC_RESOLUTION,
                     ),
+                    target_username: None,
+                    target_host: None,
+                    target_port: None,
+                    proxy_jump: None,
                 },
                 Some(process_command),
             )
@@ -655,6 +814,10 @@ where
                 rdp_dynamic_resolution: Some(
                     rdp_settings.scaling_mode == RDP_SCALING_MODE_DYNAMIC_RESOLUTION,
                 ),
+                target_username: None,
+                target_host: None,
+                target_port: None,
+                proxy_jump: None,
             },
             None,
         ),
@@ -710,6 +873,10 @@ where
                     rdp_scaling_percent: None,
                     rdp_smart_sizing: None,
                     rdp_dynamic_resolution: None,
+                    target_username: None,
+                    target_host: None,
+                    target_port: None,
+                    proxy_jump: None,
                 },
                 Some(process_command),
             )
@@ -742,6 +909,10 @@ where
                 rdp_scaling_percent: None,
                 rdp_smart_sizing: None,
                 rdp_dynamic_resolution: None,
+                target_username: None,
+                target_host: None,
+                target_port: None,
+                proxy_jump: None,
             },
             None,
         ),
@@ -897,6 +1068,29 @@ where
     terminal_command_for(&terminal, &sftp_argv)
 }
 
+pub fn build_install_public_key_launch_command<F>(
+    server: &ServerProfile,
+    identity_file: &str,
+    settings: &AppSettings,
+    available: F,
+) -> AppResult<ProcessCommand>
+where
+    F: Fn(&str) -> bool,
+{
+    if !available("ssh-copy-id") {
+        return Err(
+            "OpenSSH tool 'ssh-copy-id' was not found in PATH. Install the OpenSSH package that provides ssh-copy-id and try again."
+                .to_string(),
+        );
+    }
+
+    validate_public_key_file_path(identity_file)?;
+    let install_argv = build_install_public_key_argv(server, identity_file)?;
+    let terminal = select_terminal(&settings.terminal_preference, available)?;
+
+    terminal_command_for(&terminal, &install_argv)
+}
+
 pub fn select_rdp_client<F>(available: F) -> AppResult<String>
 where
     F: Fn(&str) -> bool,
@@ -1003,6 +1197,27 @@ fn validate_identity_file_path(identity_file: Option<&str>) -> AppResult<()> {
 
     if !metadata.is_file() {
         return Err(format!("Selected SSH key path is not a file: {expanded}"));
+    }
+
+    Ok(())
+}
+
+pub fn validate_public_key_file_path(identity_file: &str) -> AppResult<()> {
+    let private_key_path = expand_home_path(
+        &normalize_optional(identity_file)
+            .ok_or_else(|| "SSH key reference path is required".to_string())?,
+    );
+    let public_key_path = public_key_path_for_identity_file(identity_file)?;
+    let metadata = fs::metadata(&public_key_path).map_err(|_| {
+        format!(
+            "Public key file not found. Create it with: ssh-keygen -y -f {} > {}",
+            shell_quote(&private_key_path),
+            shell_quote(&public_key_path)
+        )
+    })?;
+
+    if !metadata.is_file() {
+        return Err(format!("Public key path is not a file: {public_key_path}"));
     }
 
     Ok(())
@@ -1206,6 +1421,71 @@ mod tests {
                 "ProxyJump=user@bastion:22,jump2",
                 "admin@nas.local"
             ]
+        );
+    }
+
+    #[test]
+    fn resolves_public_key_path_from_identity_file() {
+        assert_eq!(
+            public_key_path_for_identity_file("/home/user/.ssh/id_ed25519_homelab").unwrap(),
+            "/home/user/.ssh/id_ed25519_homelab.pub"
+        );
+    }
+
+    #[test]
+    fn builds_install_public_key_argv_with_profile_fields() {
+        let mut server = sample_server();
+        server.proxy_jump = Some("user@bastion:22".to_string());
+
+        let argv =
+            build_install_public_key_argv(&server, "/home/user/.ssh/id_ed25519_homelab").unwrap();
+
+        assert_eq!(
+            argv,
+            vec![
+                "ssh-copy-id",
+                "-i",
+                "/home/user/.ssh/id_ed25519_homelab.pub",
+                "-p",
+                "2222",
+                "-o",
+                "ProxyJump=user@bastion:22",
+                "admin@nas.local"
+            ]
+        );
+    }
+
+    #[test]
+    fn builds_install_public_key_argv_with_default_port_and_quoted_display() {
+        let mut server = sample_server();
+        server.port = 22;
+
+        let argv = build_install_public_key_argv(&server, "/home/alex/.ssh/lab key").unwrap();
+        assert_eq!(
+            argv,
+            vec![
+                "ssh-copy-id",
+                "-i",
+                "/home/alex/.ssh/lab key.pub",
+                "-p",
+                "22",
+                "admin@nas.local"
+            ]
+        );
+        assert_eq!(
+            format_argv_for_display(&argv),
+            "ssh-copy-id -i '/home/alex/.ssh/lab key.pub' -p 22 admin@nas.local"
+        );
+    }
+
+    #[test]
+    fn rejects_install_public_key_without_username() {
+        let mut server = sample_server();
+        server.username = " ".to_string();
+
+        assert_eq!(
+            build_install_public_key_argv(&server, "/home/user/.ssh/id_ed25519").unwrap_err(),
+            "Username is required to install a public key"
         );
     }
 
@@ -1551,6 +1831,63 @@ mod tests {
     }
 
     #[test]
+    fn install_public_key_preflight_reports_missing_ssh_copy_id() {
+        assert_eq!(
+            build_install_public_key_launch_command(
+                &sample_server(),
+                "/home/user/.ssh/id_ed25519",
+                &sample_settings(),
+                |_| false
+            )
+            .unwrap_err(),
+            "OpenSSH tool 'ssh-copy-id' was not found in PATH. Install the OpenSSH package that provides ssh-copy-id and try again."
+        );
+    }
+
+    #[test]
+    fn install_public_key_preflight_reports_missing_public_key() {
+        let dir = tempdir().unwrap();
+        let key_path = dir.path().join("id_ed25519");
+
+        let error = build_install_public_key_launch_command(
+            &sample_server(),
+            key_path.to_str().unwrap(),
+            &sample_settings(),
+            |candidate| candidate == "ssh-copy-id" || candidate == "konsole",
+        )
+        .unwrap_err();
+
+        assert!(error.contains("Public key file not found"));
+        assert!(error.contains("ssh-keygen -y -f"));
+        assert!(error.contains(".pub"));
+    }
+
+    #[test]
+    fn install_public_key_preflight_does_not_require_private_key_file() {
+        let dir = tempdir().unwrap();
+        let key_path = dir.path().join("id_ed25519");
+        fs::write(
+            format!("{}.pub", key_path.to_string_lossy()),
+            "ssh-ed25519 AAA test",
+        )
+        .unwrap();
+
+        let command = build_install_public_key_launch_command(
+            &sample_server(),
+            key_path.to_str().unwrap(),
+            &sample_settings(),
+            |candidate| candidate == "ssh-copy-id" || candidate == "alacritty",
+        )
+        .unwrap();
+
+        assert_eq!(command.program, "alacritty");
+        assert!(command.args.contains(&"ssh-copy-id".to_string()));
+        assert!(command
+            .args
+            .contains(&format!("{}.pub", key_path.to_string_lossy())));
+    }
+
+    #[test]
     fn tunnel_launch_preflight_reports_missing_ssh_and_terminal() {
         assert_eq!(
             build_tunnel_launch_command(
@@ -1624,6 +1961,48 @@ mod tests {
             .required_binaries
             .iter()
             .any(|binary| binary.name == "ssh" && binary.exists));
+    }
+
+    #[test]
+    fn install_public_key_launch_diagnostics_include_target_and_public_key() {
+        let dir = tempdir().unwrap();
+        let key_path = dir.path().join("id_ed25519");
+        let public_key_path = format!("{}.pub", key_path.to_string_lossy());
+        fs::write(&public_key_path, "ssh-ed25519 AAA test").unwrap();
+
+        let mut server = sample_server();
+        server.proxy_jump = Some("jump.local".to_string());
+        let (diagnostics, command) = build_install_public_key_launch_diagnostics(
+            &server,
+            key_path.to_str().unwrap(),
+            &sample_settings(),
+            |candidate| candidate == "ssh-copy-id" || candidate == "alacritty",
+        );
+        let command = command.unwrap();
+
+        assert_eq!(command.program, "alacritty");
+        assert_eq!(command.args[0], "-e");
+        assert!(command.args.contains(&"ssh-copy-id".to_string()));
+        assert!(command.args.contains(&public_key_path));
+        assert_eq!(diagnostics.backend_result, "spawned");
+        assert_eq!(diagnostics.action_type, "install-public-key");
+        assert_eq!(
+            diagnostics.selected_terminal_or_client,
+            Some("alacritty".to_string())
+        );
+        assert_eq!(diagnostics.key_file_exists, Some(false));
+        assert_eq!(diagnostics.public_key_path, Some(public_key_path.clone()));
+        assert_eq!(diagnostics.public_key_file_exists, Some(true));
+        assert_eq!(diagnostics.target_username, Some("admin".to_string()));
+        assert_eq!(diagnostics.target_host, Some("nas.local".to_string()));
+        assert_eq!(diagnostics.target_port, Some(2222));
+        assert_eq!(diagnostics.proxy_jump, Some("jump.local".to_string()));
+        assert!(diagnostics.command_preview.starts_with("ssh-copy-id -i "));
+        assert!(!command.args.iter().any(|arg| arg.contains("/p:")));
+        assert!(diagnostics
+            .required_binaries
+            .iter()
+            .any(|binary| binary.name == "ssh-copy-id" && binary.exists));
     }
 
     #[test]

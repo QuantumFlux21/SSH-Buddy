@@ -17,6 +17,7 @@ Open a private security advisory on GitHub when the repository is public. Until 
 - Do not store sudo passwords.
 - Do not store RDP passwords.
 - Do not inject passwords into SSH, sudo, RDP, or remote shells.
+- Do not silently deploy SSH keys.
 - Do not store FTP, RDP, or other remote-access passwords.
 - Keep command execution narrowly scoped and backend-owned.
 - Warn before risky features such as agent forwarding, root login, password storage, or automatic privileged commands.
@@ -25,6 +26,8 @@ Open a private security advisory on GitHub when the repository is public. Until 
 
 The app stores references to key files, labels, optional public fingerprints, and profile metadata only. Private key contents stay in user-controlled OpenSSH files, the OS, `ssh-agent`, or a dedicated password manager chosen by the user.
 
+Public key install uses the matching `<private-key-path>.pub` file for a saved SSH key reference. SSH-Buddy does not read, import, store, or copy private key contents, and it does not store the public key contents in the database for this milestone.
+
 ## Privileged Workflows
 
 SSH-Buddy must not automate sudo by storing or injecting sudo passwords. Normal interactive sudo prompts remain the default. Any future automation around privileged commands must require explicit user configuration, clear warnings, and narrow command scope.
@@ -32,10 +35,11 @@ SSH-Buddy must not automate sudo by storing or injecting sudo passwords. Normal 
 ## Current Release Guarantees
 
 - SSH launch uses the system `ssh` binary and argv/process APIs.
-- SSH, SFTP, RDP, and tunnel launch use argv/process APIs and do not pass commands through a shell.
+- SSH, SFTP, public key install, RDP, and tunnel launch use argv/process APIs and do not pass commands through a shell.
 - SSH config import reads `~/.ssh/config` but does not create, edit, or overwrite it.
 - Import stores explicit `IdentityFile` paths as key references only.
 - ProxyJump values are stored as local metadata and passed to OpenSSH with `-J` after validation.
+- Public key install uses system `ssh-copy-id`, requires explicit confirmation, installs the `.pub` file only, and keeps remote password prompts in the external terminal.
 - SFTP launch uses the system OpenSSH `sftp` client and passes ProxyJump with `-o ProxyJump=...` for compatibility.
 - RDP launch uses `xfreerdp3` or `xfreerdp` through the selected external terminal so FreeRDP can prompt interactively, and never includes `/p:` password arguments.
 - RDP certificate handling is allowlisted to prompt/default, `/cert:tofu`, or `/cert:ignore`; ignore is marked less secure and is not selected silently.
@@ -53,6 +57,12 @@ SSH tunnel support is limited to local forwarding for now. Tunnel launch uses `s
 ## SFTP Safety
 
 SFTP support delegates file-transfer behavior to the system OpenSSH `sftp` client in an external terminal. SSH-Buddy builds argv values from saved profile metadata only. It does not store SFTP passwords, read private key contents, or inject credentials. Any passphrase, password, or host-key prompt remains part of the normal OpenSSH terminal flow.
+
+## Public Key Install Safety
+
+Public key install delegates key installation to system `ssh-copy-id` in an external terminal. SSH-Buddy builds argv values from saved server profile data and the selected SSH key reference only. It resolves the public key path as `<private-key-path>.pub`, checks that file exists, and never reads private key contents. The action requires explicit confirmation before launch.
+
+SSH-Buddy does not store server passwords, SSH key passphrases, or public key contents. It does not pass passwords on the command line, modify sudoers, automate sudo/root access, or run a shell fallback. Password and host-key prompts remain in the external terminal/OpenSSH flow.
 
 ## RDP Safety
 
@@ -72,6 +82,7 @@ SSH-Buddy stores local app metadata in `ssh-buddy.sqlite3` under the Tauri app d
 - Does not store RDP passwords.
 - Does not store sudo passwords.
 - Does not inject passwords into SSH, sudo, remote shells, RDP, FTP, or web URLs.
+- Does not silently deploy SSH keys.
 - Does not automate root login or privileged command execution.
 - Does not enable agent forwarding by default.
 - Does not implement FTP, FTPS, remote forwarding, SOCKS tunnels, embedded SFTP/RDP experiences, embedded terminal sessions, sync, or KeePassXC integration.

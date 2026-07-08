@@ -97,6 +97,10 @@ function mockLaunchDiagnostics(actionType: string, commandPreview = ""): LaunchD
     rdpScalingPercent: null,
     rdpSmartSizing: null,
     rdpDynamicResolution: null,
+    targetUsername: null,
+    targetHost: null,
+    targetPort: null,
+    proxyJump: null,
   };
 }
 
@@ -263,6 +267,50 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
         throw new Error("Server not found");
       }
       return mockLaunchDiagnostics("sftp") as T;
+    }
+    case "get_install_public_key_command": {
+      const server = mockState.servers.find((item) => item.id === args?.serverId);
+      if (!server) {
+        throw new Error("Server not found");
+      }
+      if (!server.identityFileId) {
+        throw new Error("Select an SSH key reference before installing a public key.");
+      }
+      if (!server.username.trim()) {
+        throw new Error("Username is required to install a public key");
+      }
+      const key = mockState.sshKeys.find((item) => item.id === server.identityFileId);
+      if (!key) {
+        throw new Error("Selected SSH key reference was not found");
+      }
+      const parts = ["ssh-copy-id", "-i", `${key.path}.pub`, "-p", String(server.port)];
+      if (server.proxyJump) {
+        parts.push("-o", `ProxyJump=${server.proxyJump}`);
+      }
+      parts.push(`${server.username}@${server.host}`);
+      return parts.join(" ") as T;
+    }
+    case "launch_install_public_key": {
+      const server = mockState.servers.find((item) => item.id === args?.serverId);
+      if (!server) {
+        throw new Error("Server not found");
+      }
+      if (!server.identityFileId) {
+        throw new Error("Select an SSH key reference before installing a public key.");
+      }
+      const key = mockState.sshKeys.find((item) => item.id === server.identityFileId);
+      if (!key) {
+        throw new Error("Selected SSH key reference was not found");
+      }
+      return {
+        ...mockLaunchDiagnostics("install-public-key", `ssh-copy-id -i ${key.path}.pub -p ${server.port} ${server.username}@${server.host}`),
+        publicKeyPath: `${key.path}.pub`,
+        publicKeyFileExists: null,
+        targetUsername: server.username,
+        targetHost: server.host,
+        targetPort: server.port,
+        proxyJump: server.proxyJump,
+      } as T;
     }
     case "get_rdp_settings": {
       const serverId = args?.serverId as string;
@@ -593,6 +641,8 @@ export const api = {
   launchSsh: (serverId: string) => call<LaunchDiagnostics>("launch_ssh", { serverId }),
   getSftpCommand: (serverId: string) => call<string>("get_sftp_command", { serverId }),
   launchSftp: (serverId: string) => call<LaunchDiagnostics>("launch_sftp", { serverId }),
+  getInstallPublicKeyCommand: (serverId: string) => call<string>("get_install_public_key_command", { serverId }),
+  launchInstallPublicKey: (serverId: string) => call<LaunchDiagnostics>("launch_install_public_key", { serverId }),
   getRdpSettings: (serverId: string) => call<RdpSettings | null>("get_rdp_settings", { serverId }),
   saveRdpSettings: (serverId: string, input: RdpSettingsInput) => call<RdpSettings>("save_rdp_settings", { serverId, input }),
   deleteRdpSettings: (serverId: string) => call<void>("delete_rdp_settings", { serverId }),

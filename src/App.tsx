@@ -93,6 +93,7 @@ export default function App() {
   const [rdpLoading, setRdpLoading] = useState(false);
   const [editingRdpSettings, setEditingRdpSettings] = useState<RdpSettingsFormModel | null>(null);
   const [serverPendingDelete, setServerPendingDelete] = useState<ServerProfile | null>(null);
+  const [serverPendingPublicKeyInstall, setServerPendingPublicKeyInstall] = useState<ServerProfile | null>(null);
   const [showImport, setShowImport] = useState(false);
   const [busyMessage, setBusyMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -300,6 +301,29 @@ export default function App() {
         return launchStatus(await api.launchSftp(server.id));
       },
     );
+  }
+
+  async function copyInstallPublicKeyCommand(server: ServerProfile) {
+    await runAction(
+      "Copying public key install command",
+      async () => {
+        const command = await api.getInstallPublicKeyCommand(server.id);
+        await copyCommandText(command);
+      },
+      "Public key install command copied to clipboard.",
+    );
+  }
+
+  async function confirmInstallPublicKey() {
+    if (!serverPendingPublicKeyInstall) {
+      return;
+    }
+
+    const server = serverPendingPublicKeyInstall;
+    await runAction("Installing public key", async () => {
+      setServerPendingPublicKeyInstall(null);
+      return launchStatus(await api.launchInstallPublicKey(server.id));
+    });
   }
 
   async function toggleFavorite(server: ServerProfile) {
@@ -601,6 +625,8 @@ export default function App() {
             onLaunch={launchSsh}
             onCopySftpCommand={copySftpCommand}
             onLaunchSftp={launchSftp}
+            onCopyInstallPublicKeyCommand={copyInstallPublicKeyCommand}
+            onRequestInstallPublicKey={setServerPendingPublicKeyInstall}
             onToggleFavorite={toggleFavorite}
             webLinks={webLinks}
             webLinksLoading={webLinksLoading}
@@ -743,6 +769,16 @@ export default function App() {
           busy={isBusy}
         />
       ) : null}
+
+      {serverPendingPublicKeyInstall ? (
+        <InstallPublicKeyDialog
+          server={serverPendingPublicKeyInstall}
+          keyRef={keyRefForServer(snapshot.sshKeys, serverPendingPublicKeyInstall)}
+          onCancel={() => setServerPendingPublicKeyInstall(null)}
+          onConfirm={confirmInstallPublicKey}
+          busy={isBusy}
+        />
+      ) : null}
     </div>
   );
 }
@@ -812,8 +848,18 @@ function LaunchDetailsPanel({ details }: { details: LaunchDiagnostics }) {
         <LaunchDetail label="Executable used" value={details.executable ?? "None"} />
         <LaunchDetail label="Key path" value={details.keyPath ?? "No explicit key"} />
         <LaunchDetail label="Key file exists" value={formatMaybeBoolean(details.keyFileExists)} />
+        <LaunchDetail label="Public key path" value={details.publicKeyPath ?? "No public key path"} />
         <LaunchDetail label="Public key exists" value={formatMaybeBoolean(details.publicKeyFileExists)} />
       </div>
+
+      {details.actionType === "install-public-key" ? (
+        <div className="launch-detail-grid">
+          <LaunchDetail label="Target username" value={details.targetUsername || "Not set"} />
+          <LaunchDetail label="Target host" value={details.targetHost || "Not set"} />
+          <LaunchDetail label="Target port" value={details.targetPort ? String(details.targetPort) : "Not set"} />
+          <LaunchDetail label="ProxyJump" value={details.proxyJump || "Not set"} />
+        </div>
+      ) : null}
 
       {details.actionType === "rdp" ? (
         <div className="launch-detail-grid">
@@ -868,6 +914,8 @@ function launchActionLabel(actionType: string) {
       return "Open SSH";
     case "sftp":
       return "Open SFTP";
+    case "install-public-key":
+      return "Install public key";
     case "tunnel":
       return "Open SSH tunnel";
     case "rdp":
@@ -907,6 +955,8 @@ function ServerDetails({
   onLaunch,
   onCopySftpCommand,
   onLaunchSftp,
+  onCopyInstallPublicKeyCommand,
+  onRequestInstallPublicKey,
   onToggleFavorite,
   webLinks,
   webLinksLoading,
@@ -952,6 +1002,8 @@ function ServerDetails({
   onLaunch: (server: ServerProfile) => void;
   onCopySftpCommand: (server: ServerProfile) => void;
   onLaunchSftp: (server: ServerProfile) => void;
+  onCopyInstallPublicKeyCommand: (server: ServerProfile) => void;
+  onRequestInstallPublicKey: (server: ServerProfile) => void;
   onToggleFavorite: (server: ServerProfile) => void;
   webLinks: WebLink[];
   webLinksLoading: boolean;
@@ -1019,6 +1071,14 @@ function ServerDetails({
     );
   }
 
+  const selectedKeyRef = keyRefForServer(keyRefs, server);
+  const canInstallPublicKey = Boolean(selectedKeyRef && server.username.trim() && server.host.trim());
+  const installPublicKeyTitle = !selectedKeyRef
+    ? "Select an SSH key reference first"
+    : !server.username.trim()
+      ? "Set a username before installing a public key"
+      : "Install the selected public key on the remote server";
+
   return (
     <div className="detail-grid">
       <section className="detail-main">
@@ -1064,8 +1124,29 @@ function ServerDetails({
             <Copy size={17} />
             Copy SFTP command
           </button>
+          <button
+            className="button"
+            disabled={busy || !canInstallPublicKey}
+            title={installPublicKeyTitle}
+            onClick={() => onRequestInstallPublicKey(server)}
+          >
+            <KeyRound size={17} />
+            Install public key
+          </button>
+          <button
+            className="button"
+            disabled={busy || !canInstallPublicKey}
+            title={canInstallPublicKey ? "Copy the ssh-copy-id command" : installPublicKeyTitle}
+            onClick={() => onCopyInstallPublicKeyCommand(server)}
+          >
+            <Copy size={17} />
+            Copy install command
+          </button>
         </div>
-        <p className="field-hint">SFTP uses system OpenSSH, the same key references, ssh-agent, ProxyJump settings, and terminal prompts as SSH.</p>
+        <p className="field-hint">
+          SFTP uses system OpenSSH, the same key references, ssh-agent, ProxyJump settings, and terminal prompts as SSH. Public key install uses
+          ssh-copy-id and installs the public key only. Your private key never leaves this computer.
+        </p>
 
         <div className="info-grid">
           <Info label="Host" value={server.host} />
@@ -1855,6 +1936,79 @@ function keyLabel(keyRefs: SshKeyRef[], keyId: string | null) {
 
   const key = keyRefs.find((item) => item.id === keyId);
   return key ? `${key.label} (${key.path})` : "Missing key reference";
+}
+
+function keyRefForServer(keyRefs: SshKeyRef[], server: ServerProfile) {
+  return server.identityFileId ? keyRefs.find((item) => item.id === server.identityFileId) ?? null : null;
+}
+
+function publicKeyPathForKeyRef(keyRef: SshKeyRef | null) {
+  return keyRef ? `${keyRef.path}.pub` : "No SSH key reference selected";
+}
+
+function InstallPublicKeyDialog({
+  server,
+  keyRef,
+  onCancel,
+  onConfirm,
+  busy,
+}: {
+  server: ServerProfile;
+  keyRef: SshKeyRef | null;
+  onCancel: () => void;
+  onConfirm: () => void;
+  busy: boolean;
+}) {
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <section className="modal confirm-modal" role="dialog" aria-modal="true" aria-labelledby="install-public-key-title">
+        <div className="modal-heading">
+          <div>
+            <p className="eyebrow">Confirm public key install</p>
+            <h2 id="install-public-key-title">Install public key on {server.displayName}?</h2>
+          </div>
+          <button type="button" className="icon-button" aria-label="Close" disabled={busy} onClick={onCancel}>
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="confirm-body neutral">
+          <KeyRound size={24} />
+          <div>
+            <p>This installs the selected public key on the remote server using system ssh-copy-id.</p>
+            <p className="muted">You may be prompted for the server password in the external terminal. SSH-Buddy does not store the password.</p>
+            <p className="muted">SSH-Buddy stores the key path only. It does not import, copy, or store private key contents.</p>
+          </div>
+        </div>
+
+        <div className="selected-meta">
+          <span>SSH key reference</span>
+          <strong>{keyRef ? `${keyRef.label} (${keyRef.path})` : "Missing key reference"}</strong>
+          <span>Public key path</span>
+          <strong>{publicKeyPathForKeyRef(keyRef)}</strong>
+          <span>Target</span>
+          <strong>
+            {server.username}@{server.host}:{server.port}
+          </strong>
+          {server.proxyJump ? (
+            <>
+              <span>ProxyJump</span>
+              <strong>{server.proxyJump}</strong>
+            </>
+          ) : null}
+        </div>
+
+        <div className="modal-actions">
+          <button type="button" className="button ghost" disabled={busy} onClick={onCancel}>
+            Cancel
+          </button>
+          <button type="button" className="button primary" disabled={busy || !keyRef} onClick={onConfirm}>
+            Install public key
+          </button>
+        </div>
+      </section>
+    </div>
+  );
 }
 
 function DeleteServerDialog({

@@ -9,9 +9,10 @@ use crate::{
         SshKeyRef, Tunnel, TunnelInput, WebLink, WebLinkInput,
     },
     launcher::{
-        build_rdp_launch_command, build_sftp_argv, build_ssh_argv, build_tunnel_argv,
-        format_argv_for_display, launch_rdp as launch_rdp_client, launch_sftp_in_terminal,
-        launch_ssh_in_terminal, launch_tunnel_in_terminal,
+        build_install_public_key_argv, build_rdp_launch_command, build_sftp_argv, build_ssh_argv,
+        build_tunnel_argv, format_argv_for_display, launch_install_public_key_in_terminal,
+        launch_rdp as launch_rdp_client, launch_sftp_in_terminal, launch_ssh_in_terminal,
+        launch_tunnel_in_terminal, validate_public_key_file_path,
     },
 };
 
@@ -127,6 +128,35 @@ pub fn launch_sftp(server_id: String, db: State<'_, Database>) -> AppResult<Laun
     let settings = db.get_settings()?;
 
     launch_sftp_in_terminal(&server, identity_file.as_deref(), &settings)
+}
+
+#[tauri::command]
+pub fn get_install_public_key_command(
+    server_id: String,
+    db: State<'_, Database>,
+) -> AppResult<String> {
+    let server = db
+        .get_server(&server_id)?
+        .ok_or_else(|| "Server not found".to_string())?;
+    let identity_file = required_identity_file_path(&db, &server)?;
+
+    validate_public_key_file_path(&identity_file)?;
+    let argv = build_install_public_key_argv(&server, &identity_file)?;
+    Ok(format_argv_for_display(&argv))
+}
+
+#[tauri::command]
+pub fn launch_install_public_key(
+    server_id: String,
+    db: State<'_, Database>,
+) -> AppResult<LaunchDiagnostics> {
+    let server = db
+        .get_server(&server_id)?
+        .ok_or_else(|| "Server not found".to_string())?;
+    let identity_file = required_identity_file_path(&db, &server)?;
+    let settings = db.get_settings()?;
+
+    launch_install_public_key_in_terminal(&server, &identity_file, &settings)
 }
 
 #[tauri::command]
@@ -294,4 +324,9 @@ fn identity_file_path(db: &Database, server: &ServerProfile) -> AppResult<Option
             .ok_or_else(|| "Selected SSH key reference was not found".to_string()),
         None => Ok(None),
     }
+}
+
+fn required_identity_file_path(db: &Database, server: &ServerProfile) -> AppResult<String> {
+    identity_file_path(db, server)?
+        .ok_or_else(|| "Select an SSH key reference before installing a public key.".to_string())
 }

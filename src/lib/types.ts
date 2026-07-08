@@ -200,6 +200,10 @@ export interface LaunchDiagnostics {
   rdpScalingPercent: number | null;
   rdpSmartSizing: boolean | null;
   rdpDynamicResolution: boolean | null;
+  targetUsername: string | null;
+  targetHost: string | null;
+  targetPort: number | null;
+  proxyJump: string | null;
 }
 
 export type RdpCertificateMode = "prompt" | "tofu" | "ignore";
