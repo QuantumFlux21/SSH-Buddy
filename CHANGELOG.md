@@ -4,7 +4,12 @@ All notable changes to SSH-Buddy will be documented in this file.
 
 ## Unreleased
 
-No unreleased changes yet.
+### Changed
+
+- Reworked the selected-server detail page into clearer overview, connection action, notes, tunnel, RDP, web link, status, and diagnostics areas.
+- Grouped SSH, SFTP, and public key install actions into separate action cards instead of one large button row.
+- Made launch diagnostics more compact with the command preview visible and deeper details behind a disclosure.
+- Improved responsive layout so the right-side panel and row actions stack more cleanly on narrower windows.
 
 ## 0.6.0 - 2026-07-07
 

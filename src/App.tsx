@@ -695,6 +695,7 @@ export default function App() {
         {busyMessage ? <div className="status-banner">{busyMessage}...</div> : null}
         {manualCopyCommand ? <ManualCopyPanel command={manualCopyCommand} /> : null}
         {lastLaunchAttempt ? <LaunchDetailsPanel details={lastLaunchAttempt} /> : null}
+        {activeSection === "servers" && selectedServer && !lastLaunchAttempt ? <NoDiagnosticsPanel /> : null}
 
         {activeSection === "servers" ? (
           <ServerDetails
@@ -933,43 +934,11 @@ function LaunchDetailsPanel({ details }: { details: LaunchDiagnostics }) {
 
       <p className="field-hint">{details.message}</p>
 
-      <div className="launch-detail-grid">
-        <LaunchDetail label="Selected terminal/client" value={details.selectedTerminalOrClient ?? "Not selected"} />
-        <LaunchDetail label="Executable used" value={details.executable ?? "None"} />
-        <LaunchDetail label="Key path" value={details.keyPath ?? "No explicit key"} />
-        <LaunchDetail label="Key file exists" value={formatMaybeBoolean(details.keyFileExists)} />
-        <LaunchDetail label="Public key path" value={details.publicKeyPath ?? "No public key path"} />
-        <LaunchDetail label="Public key exists" value={formatMaybeBoolean(details.publicKeyFileExists)} />
+      <div className="diagnostics-summary-grid">
+        <LaunchDetail label="Action" value={launchActionLabel(details.actionType)} />
+        <LaunchDetail label="Terminal/client" value={details.selectedTerminalOrClient ?? "Not selected"} />
+        <LaunchDetail label="Executable" value={details.executable ?? "None"} />
       </div>
-
-      {details.actionType === "install-public-key" ? (
-        <div className="launch-detail-grid">
-          <LaunchDetail label="Target username" value={details.targetUsername || "Not set"} />
-          <LaunchDetail label="Target host" value={details.targetHost || "Not set"} />
-          <LaunchDetail label="Target port" value={details.targetPort ? String(details.targetPort) : "Not set"} />
-          <LaunchDetail label="ProxyJump" value={details.proxyJump || "Not set"} />
-        </div>
-      ) : null}
-
-      {details.actionType === "rdp" ? (
-        <div className="launch-detail-grid">
-          <LaunchDetail label="FreeRDP executable" value={details.freeRdpExecutable ?? "Not selected"} />
-          <LaunchDetail label="Via terminal" value={formatMaybeBoolean(details.launchedViaTerminal)} />
-          <LaunchDetail label="Certificate mode" value={details.certificateMode ? rdpCertificateModeLabel(details.certificateMode) : "Not set"} />
-          <LaunchDetail label="RDP username" value={details.rdpUsername || "Prompt/default"} />
-          <LaunchDetail label="RDP domain" value={details.rdpDomain || "Not set"} />
-          <LaunchDetail label="RDP port" value={details.rdpPort ? String(details.rdpPort) : "Not set"} />
-          <LaunchDetail label="Fullscreen" value={formatMaybeBoolean(details.rdpFullscreen)} />
-          <LaunchDetail label="Width" value={details.rdpWidth ? String(details.rdpWidth) : "Not set"} />
-          <LaunchDetail label="Height" value={details.rdpHeight ? String(details.rdpHeight) : "Not set"} />
-          <LaunchDetail label="Multi-monitor" value={formatMaybeBoolean(details.rdpMultiMonitor)} />
-          <LaunchDetail label="Monitor IDs" value={details.rdpMonitorIds || "Not set"} />
-          <LaunchDetail label="Scaling mode" value={details.rdpScalingMode ? rdpScalingModeLabel(details.rdpScalingMode) : "Not set"} />
-          <LaunchDetail label="Scaling percent" value={details.rdpScalingPercent ? `${details.rdpScalingPercent}%` : "Not set"} />
-          <LaunchDetail label="Smart sizing" value={formatMaybeBoolean(details.rdpSmartSizing)} />
-          <LaunchDetail label="Dynamic resolution" value={formatMaybeBoolean(details.rdpDynamicResolution)} />
-        </div>
-      ) : null}
 
       {details.commandPreview ? (
         <div className="command-preview">
@@ -978,20 +947,69 @@ function LaunchDetailsPanel({ details }: { details: LaunchDiagnostics }) {
         </div>
       ) : null}
 
-      {details.argvPreview ? (
-        <div className="command-preview">
-          <span>Spawned argv preview</span>
-          <code>{details.argvPreview}</code>
-        </div>
-      ) : null}
+      <details className="diagnostics-details" open={details.backendResult !== "spawned"}>
+        <summary>Show launch details</summary>
 
-      <div className="binary-status-list" aria-label="Required binary status">
-        {details.requiredBinaries.map((binary) => (
-          <span key={binary.name} className={binary.exists ? "binary-status ok" : "binary-status missing"}>
-            {binary.name}: {binary.exists ? "found" : "missing"}
-          </span>
-        ))}
-      </div>
+        <div className="launch-detail-grid">
+          <LaunchDetail label="Key path" value={details.keyPath ?? "No explicit key"} />
+          <LaunchDetail label="Key file exists" value={formatMaybeBoolean(details.keyFileExists)} />
+          <LaunchDetail label="Public key path" value={details.publicKeyPath ?? "No public key path"} />
+          <LaunchDetail label="Public key exists" value={formatMaybeBoolean(details.publicKeyFileExists)} />
+        </div>
+
+        {details.actionType === "install-public-key" ? (
+          <div className="launch-detail-grid">
+            <LaunchDetail label="Target username" value={details.targetUsername || "Not set"} />
+            <LaunchDetail label="Target host" value={details.targetHost || "Not set"} />
+            <LaunchDetail label="Target port" value={details.targetPort ? String(details.targetPort) : "Not set"} />
+            <LaunchDetail label="ProxyJump" value={details.proxyJump || "Not set"} />
+          </div>
+        ) : null}
+
+        {details.actionType === "rdp" ? (
+          <div className="launch-detail-grid">
+            <LaunchDetail label="FreeRDP executable" value={details.freeRdpExecutable ?? "Not selected"} />
+            <LaunchDetail label="Via terminal" value={formatMaybeBoolean(details.launchedViaTerminal)} />
+            <LaunchDetail label="Certificate mode" value={details.certificateMode ? rdpCertificateModeLabel(details.certificateMode) : "Not set"} />
+            <LaunchDetail label="RDP username" value={details.rdpUsername || "Prompt/default"} />
+            <LaunchDetail label="RDP domain" value={details.rdpDomain || "Not set"} />
+            <LaunchDetail label="RDP port" value={details.rdpPort ? String(details.rdpPort) : "Not set"} />
+            <LaunchDetail label="Fullscreen" value={formatMaybeBoolean(details.rdpFullscreen)} />
+            <LaunchDetail label="Width" value={details.rdpWidth ? String(details.rdpWidth) : "Not set"} />
+            <LaunchDetail label="Height" value={details.rdpHeight ? String(details.rdpHeight) : "Not set"} />
+            <LaunchDetail label="Multi-monitor" value={formatMaybeBoolean(details.rdpMultiMonitor)} />
+            <LaunchDetail label="Monitor IDs" value={details.rdpMonitorIds || "Not set"} />
+            <LaunchDetail label="Scaling mode" value={details.rdpScalingMode ? rdpScalingModeLabel(details.rdpScalingMode) : "Not set"} />
+            <LaunchDetail label="Scaling percent" value={details.rdpScalingPercent ? `${details.rdpScalingPercent}%` : "Not set"} />
+            <LaunchDetail label="Smart sizing" value={formatMaybeBoolean(details.rdpSmartSizing)} />
+            <LaunchDetail label="Dynamic resolution" value={formatMaybeBoolean(details.rdpDynamicResolution)} />
+          </div>
+        ) : null}
+
+        {details.argvPreview ? (
+          <div className="command-preview">
+            <span>Spawned argv preview</span>
+            <code>{details.argvPreview}</code>
+          </div>
+        ) : null}
+
+        <div className="binary-status-list" aria-label="Required binary status">
+          {details.requiredBinaries.map((binary) => (
+            <span key={binary.name} className={binary.exists ? "binary-status ok" : "binary-status missing"}>
+              {binary.name}: {binary.exists ? "found" : "missing"}
+            </span>
+          ))}
+        </div>
+      </details>
+    </section>
+  );
+}
+
+function NoDiagnosticsPanel() {
+  return (
+    <section className="diagnostics-empty" aria-label="Launch diagnostics">
+      <Terminal size={16} />
+      <span>No launch diagnostics yet. Open SSH, SFTP, RDP, a tunnel, or test your terminal to see the last attempt here.</span>
     </section>
   );
 }
@@ -1195,85 +1213,56 @@ function ServerDetails({
   return (
     <div className="detail-grid">
       <section className="detail-main">
-        <div className="server-hero">
-          <div>
-            <p className="eyebrow">SSH profile</p>
-            <h2>{serverDestination(server)}</h2>
-            <p>{groupName(groups, server.groupId)} · Updated {shortDate(server.updatedAt)}</p>
+        <section className="panel overview-panel">
+          <div className="server-hero">
+            <div>
+              <p className="eyebrow">Overview</p>
+              <h2>{serverDestination(server)}</h2>
+              <p>{groupName(groups, server.groupId)} · Updated {shortDate(server.updatedAt)}</p>
+            </div>
+            <div className="hero-actions">
+              <button
+                className={server.favorite ? "icon-button favorite active" : "icon-button favorite"}
+                aria-label={server.favorite ? "Remove favorite" : "Mark as favorite"}
+                title={server.favorite ? "Remove favorite" : "Mark as favorite"}
+                disabled={busy}
+                onClick={() => onToggleFavorite(server)}
+              >
+                <Star size={18} fill={server.favorite ? "currentColor" : "none"} />
+              </button>
+              <button className="icon-button" aria-label="Edit server" title="Edit server" disabled={busy} onClick={() => onEdit(server)}>
+                <Pencil size={18} />
+              </button>
+              <button className="icon-button danger" aria-label="Delete server" title="Delete server" disabled={busy} onClick={() => onDelete(server)}>
+                <Trash2 size={18} />
+              </button>
+            </div>
           </div>
-          <div className="hero-actions">
-            <button
-              className={server.favorite ? "icon-button favorite active" : "icon-button favorite"}
-              aria-label={server.favorite ? "Remove favorite" : "Mark as favorite"}
-              title={server.favorite ? "Remove favorite" : "Mark as favorite"}
-              disabled={busy}
-              onClick={() => onToggleFavorite(server)}
-            >
-              <Star size={18} fill={server.favorite ? "currentColor" : "none"} />
-            </button>
-            <button className="icon-button" aria-label="Edit server" title="Edit server" disabled={busy} onClick={() => onEdit(server)}>
-              <Pencil size={18} />
-            </button>
-            <button className="icon-button danger" aria-label="Delete server" title="Delete server" disabled={busy} onClick={() => onDelete(server)}>
-              <Trash2 size={18} />
-            </button>
+
+          <div className="info-grid">
+            <Info label="Host" value={server.host} />
+            <Info label="Port" value={String(server.port)} />
+            <Info label="Username" value={server.username || "Default OpenSSH user"} />
+            <Info label="Identity file" value={keyLabel(keyRefs, server.identityFileId)} />
+            {server.proxyJump ? <Info label="ProxyJump" value={server.proxyJump} /> : null}
           </div>
-        </div>
+        </section>
 
-        <div className="action-strip">
-          <button className="button primary" disabled={busy} title="Launch SSH in an external terminal" onClick={() => onLaunch(server)}>
-            <Terminal size={17} />
-            Open SSH
-          </button>
-          <button className="button" disabled={busy} onClick={() => onCopyCommand(server)}>
-            <Copy size={17} />
-            Copy SSH command
-          </button>
-          <button className="button" disabled={busy} title="Launch SFTP in an external terminal" onClick={() => onLaunchSftp(server)}>
-            <FolderOpen size={17} />
-            Open SFTP
-          </button>
-          <button className="button" disabled={busy} onClick={() => onCopySftpCommand(server)}>
-            <Copy size={17} />
-            Copy SFTP command
-          </button>
-          <button
-            className="button"
-            disabled={busy || !canInstallPublicKey}
-            title={installPublicKeyTitle}
-            onClick={() => onRequestInstallPublicKey(server)}
-          >
-            <KeyRound size={17} />
-            Install public key
-          </button>
-          <button
-            className="button"
-            disabled={busy || !canInstallPublicKey}
-            title={canInstallPublicKey ? "Copy the ssh-copy-id command" : installPublicKeyTitle}
-            onClick={() => onCopyInstallPublicKeyCommand(server)}
-          >
-            <Copy size={17} />
-            Copy install command
-          </button>
-        </div>
-        <p className="field-hint">
-          SFTP uses system OpenSSH, the same key references, ssh-agent, ProxyJump settings, and terminal prompts as SSH. Public key install uses
-          ssh-copy-id and installs the public key only. Your private key never leaves this computer.
-        </p>
+        <ConnectionActionsPanel
+          server={server}
+          busy={busy}
+          canInstallPublicKey={canInstallPublicKey}
+          installPublicKeyTitle={installPublicKeyTitle}
+          onCopyCommand={onCopyCommand}
+          onLaunch={onLaunch}
+          onCopySftpCommand={onCopySftpCommand}
+          onLaunchSftp={onLaunchSftp}
+          onCopyInstallPublicKeyCommand={onCopyInstallPublicKeyCommand}
+          onRequestInstallPublicKey={onRequestInstallPublicKey}
+        />
 
-        <div className="info-grid">
-          <Info label="Host" value={server.host} />
-          <Info label="Port" value={String(server.port)} />
-          <Info label="Username" value={server.username || "Default OpenSSH user"} />
-          <Info label="Identity file" value={keyLabel(keyRefs, server.identityFileId)} />
-          {server.proxyJump ? <Info label="ProxyJump" value={server.proxyJump} /> : null}
-        </div>
-
-        <section className="panel">
-          <div className="panel-heading">
-            <h3>Notes</h3>
-            <span>No secrets here</span>
-          </div>
+        <section className="panel notes-panel">
+          <SectionHeader title="Notes" meta="No secrets here" />
           <p className={server.notes?.trim() ? "notes" : "muted"}>{server.notes?.trim() || "No notes saved for this server."}</p>
           <p className="field-hint">Notes are plaintext local metadata. Do not store passwords, private keys, tokens, or sudo details here.</p>
         </section>
@@ -1366,6 +1355,102 @@ function ServerDetails({
           <p className="muted">These are intentionally disabled until their backend behavior is implemented.</p>
         </section>
       </aside>
+    </div>
+  );
+}
+
+function ConnectionActionsPanel({
+  server,
+  busy,
+  canInstallPublicKey,
+  installPublicKeyTitle,
+  onCopyCommand,
+  onLaunch,
+  onCopySftpCommand,
+  onLaunchSftp,
+  onCopyInstallPublicKeyCommand,
+  onRequestInstallPublicKey,
+}: {
+  server: ServerProfile;
+  busy: boolean;
+  canInstallPublicKey: boolean;
+  installPublicKeyTitle: string;
+  onCopyCommand: (server: ServerProfile) => void;
+  onLaunch: (server: ServerProfile) => void;
+  onCopySftpCommand: (server: ServerProfile) => void;
+  onLaunchSftp: (server: ServerProfile) => void;
+  onCopyInstallPublicKeyCommand: (server: ServerProfile) => void;
+  onRequestInstallPublicKey: (server: ServerProfile) => void;
+}) {
+  return (
+    <section className="panel actions-panel">
+      <SectionHeader title="Connection actions" meta="OpenSSH-backed" />
+      <div className="action-group-grid">
+        <div className="action-group">
+          <div>
+            <h4>SSH</h4>
+            <p>Interactive terminal session using saved profile options.</p>
+          </div>
+          <div className="action-group-buttons">
+            <button className="button primary" disabled={busy} title="Launch SSH in an external terminal" onClick={() => onLaunch(server)}>
+              <Terminal size={17} />
+              Open SSH
+            </button>
+            <button className="button" disabled={busy} onClick={() => onCopyCommand(server)}>
+              <Copy size={17} />
+              Copy command
+            </button>
+          </div>
+        </div>
+
+        <div className="action-group">
+          <div>
+            <h4>SFTP</h4>
+            <p>External OpenSSH file-transfer session with the same key and ProxyJump settings.</p>
+          </div>
+          <div className="action-group-buttons">
+            <button className="button" disabled={busy} title="Launch SFTP in an external terminal" onClick={() => onLaunchSftp(server)}>
+              <FolderOpen size={17} />
+              Open SFTP
+            </button>
+            <button className="button" disabled={busy} onClick={() => onCopySftpCommand(server)}>
+              <Copy size={17} />
+              Copy command
+            </button>
+          </div>
+        </div>
+
+        <div className="action-group">
+          <div>
+            <h4>Public key</h4>
+            <p>Install the selected public key with ssh-copy-id. Private keys never leave this computer.</p>
+          </div>
+          <div className="action-group-buttons">
+            <button className="button" disabled={busy || !canInstallPublicKey} title={installPublicKeyTitle} onClick={() => onRequestInstallPublicKey(server)}>
+              <KeyRound size={17} />
+              Install key
+            </button>
+            <button
+              className="button"
+              disabled={busy || !canInstallPublicKey}
+              title={canInstallPublicKey ? "Copy the ssh-copy-id command" : installPublicKeyTitle}
+              onClick={() => onCopyInstallPublicKeyCommand(server)}
+            >
+              <Copy size={17} />
+              Copy install
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function SectionHeader({ title, meta }: { title: string; meta?: string }) {
+  return (
+    <div className="panel-heading">
+      <h3>{title}</h3>
+      {meta ? <span>{meta}</span> : null}
     </div>
   );
 }
@@ -1621,7 +1706,7 @@ function RdpPanel({
   const canLaunch = Boolean(settings?.enabled);
 
   return (
-    <section className="panel">
+    <section className="panel collapsible-panel">
       <div className="panel-heading">
         <div>
           <h3>RDP</h3>
@@ -1637,46 +1722,50 @@ function RdpPanel({
         SSH-Buddy does not store RDP passwords. FreeRDP may prompt in the external terminal for certificate trust or credentials.
       </p>
 
-      {editingSettings ? <RdpSettingsForm form={editingSettings} busy={busy} onCancel={onCancel} onSave={(form) => onSave(server, form)} /> : null}
+      <details className="section-disclosure" open>
+        <summary>RDP profile details</summary>
 
-      {loading ? <p className="muted">Loading RDP settings...</p> : null}
+        {editingSettings ? <RdpSettingsForm form={editingSettings} busy={busy} onCancel={onCancel} onSave={(form) => onSave(server, form)} /> : null}
 
-      {!loading && !settings && !editingSettings ? (
-        <div className="empty-inline">
-          <Monitor size={30} />
-          <strong>No RDP profile yet</strong>
-          <span>Configure FreeRDP launch options for this server without storing passwords.</span>
-        </div>
-      ) : null}
+        {loading ? <p className="muted">Loading RDP settings...</p> : null}
 
-      {settings && !editingSettings ? (
-        <div className="web-link-list">
-          <div className="web-link-row">
-            <Monitor size={18} />
-            <div>
-              <strong>{settings.enabled ? "RDP enabled" : "RDP disabled"}</strong>
-              <span>
-                {settings.username ? `${settings.username}${settings.domain ? ` @ ${settings.domain}` : ""}` : "FreeRDP will prompt for username"} ·{" "}
-                port {settings.port} · cert {rdpCertificateModeLabel(settings.certificateMode)} · {rdpSettingsSummary(settings)}
-              </span>
-              <span>Launch mode: selected external terminal</span>
-            </div>
-            <div className="row-actions">
-              <button className="button compact" type="button" disabled={busy || !canLaunch} onClick={() => onLaunch(server)}>
-                <Monitor size={15} />
-                Open
-              </button>
-              <button className="button compact" type="button" disabled={busy || !canLaunch} onClick={() => onCopyCommand(server)}>
-                <Copy size={15} />
-                Copy
-              </button>
-              <button className="icon-button danger" type="button" aria-label="Reset RDP settings" disabled={busy} onClick={() => onReset(server)}>
-                <Trash2 size={16} />
-              </button>
+        {!loading && !settings && !editingSettings ? (
+          <div className="empty-inline">
+            <Monitor size={30} />
+            <strong>No RDP profile yet</strong>
+            <span>Configure RDP when this server exposes Windows remote desktop. Credentials stay in FreeRDP prompts, not SSH-Buddy.</span>
+          </div>
+        ) : null}
+
+        {settings && !editingSettings ? (
+          <div className="web-link-list">
+            <div className="web-link-row">
+              <Monitor size={18} />
+              <div>
+                <strong>{settings.enabled ? "RDP enabled" : "RDP disabled"}</strong>
+                <span>
+                  {settings.username ? `${settings.username}${settings.domain ? ` @ ${settings.domain}` : ""}` : "FreeRDP will prompt for username"} ·{" "}
+                  port {settings.port} · cert {rdpCertificateModeLabel(settings.certificateMode)} · {rdpSettingsSummary(settings)}
+                </span>
+                <span>Launch mode: selected external terminal</span>
+              </div>
+              <div className="row-actions">
+                <button className="button compact" type="button" disabled={busy || !canLaunch} onClick={() => onLaunch(server)}>
+                  <Monitor size={15} />
+                  Open
+                </button>
+                <button className="button compact" type="button" disabled={busy || !canLaunch} onClick={() => onCopyCommand(server)}>
+                  <Copy size={15} />
+                  Copy
+                </button>
+                <button className="icon-button danger" type="button" aria-label="Reset RDP settings" disabled={busy} onClick={() => onReset(server)}>
+                  <Trash2 size={16} />
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      ) : null}
+        ) : null}
+      </details>
     </section>
   );
 }
@@ -1918,7 +2007,7 @@ function TunnelsPanel({
   onLaunch: (server: ServerProfile, tunnel: Tunnel) => void;
 }) {
   return (
-    <section className="panel">
+    <section className="panel collapsible-panel">
       <div className="panel-heading">
         <div>
           <h3>SSH Tunnels</h3>
@@ -1932,49 +2021,53 @@ function TunnelsPanel({
 
       <p className="field-hint">Tunnels use OpenSSH local forwarding and stay open while the external terminal session is running.</p>
 
-      {editingTunnel ? (
-        <TunnelForm form={editingTunnel} busy={busy} onCancel={onCancel} onSave={(form) => onSave(server, form)} />
-      ) : null}
+      <details className="section-disclosure" open>
+        <summary>Tunnel profiles</summary>
 
-      {loading ? <p className="muted">Loading tunnels...</p> : null}
+        {editingTunnel ? (
+          <TunnelForm form={editingTunnel} busy={busy} onCancel={onCancel} onSave={(form) => onSave(server, form)} />
+        ) : null}
 
-      {!loading && tunnels.length === 0 && !editingTunnel ? (
-        <div className="empty-inline">
-          <Cable size={30} />
-          <strong>No SSH tunnels yet</strong>
-          <span>Add local forwards for databases, admin panels, or internal services reachable from this server.</span>
-        </div>
-      ) : null}
+        {loading ? <p className="muted">Loading tunnels...</p> : null}
 
-      {tunnels.length > 0 ? (
-        <div className="web-link-list">
-          {tunnels.map((tunnel) => (
-            <div className="web-link-row" key={tunnel.id}>
-              <Cable size={18} />
-              <div>
-                <strong>{tunnel.label}</strong>
-                <span>{tunnelSummary(tunnel)}</span>
+        {!loading && tunnels.length === 0 && !editingTunnel ? (
+          <div className="empty-inline">
+            <Cable size={30} />
+            <strong>No SSH tunnels yet</strong>
+            <span>Add a local forward when you need a database, admin panel, or internal service reachable through this SSH profile.</span>
+          </div>
+        ) : null}
+
+        {tunnels.length > 0 ? (
+          <div className="web-link-list">
+            {tunnels.map((tunnel) => (
+              <div className="web-link-row" key={tunnel.id}>
+                <Cable size={18} />
+                <div>
+                  <strong>{tunnel.label}</strong>
+                  <span>{tunnelSummary(tunnel)}</span>
+                </div>
+                <div className="row-actions">
+                  <button className="button compact" type="button" disabled={busy} onClick={() => onLaunch(server, tunnel)}>
+                    <Terminal size={15} />
+                    Launch
+                  </button>
+                  <button className="button compact" type="button" disabled={busy} onClick={() => onCopyCommand(server, tunnel)}>
+                    <Copy size={15} />
+                    Copy
+                  </button>
+                  <button className="icon-button" type="button" aria-label={`Edit ${tunnel.label}`} disabled={busy} onClick={() => onEdit(tunnel)}>
+                    <Pencil size={16} />
+                  </button>
+                  <button className="icon-button danger" type="button" aria-label={`Delete ${tunnel.label}`} disabled={busy} onClick={() => onDelete(server, tunnel)}>
+                    <Trash2 size={16} />
+                  </button>
+                </div>
               </div>
-              <div className="row-actions">
-                <button className="button compact" type="button" disabled={busy} onClick={() => onLaunch(server, tunnel)}>
-                  <Terminal size={15} />
-                  Launch
-                </button>
-                <button className="button compact" type="button" disabled={busy} onClick={() => onCopyCommand(server, tunnel)}>
-                  <Copy size={15} />
-                  Copy
-                </button>
-                <button className="icon-button" type="button" aria-label={`Edit ${tunnel.label}`} disabled={busy} onClick={() => onEdit(tunnel)}>
-                  <Pencil size={16} />
-                </button>
-                <button className="icon-button danger" type="button" aria-label={`Delete ${tunnel.label}`} disabled={busy} onClick={() => onDelete(server, tunnel)}>
-                  <Trash2 size={16} />
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : null}
+            ))}
+          </div>
+        ) : null}
+      </details>
     </section>
   );
 }
@@ -2140,7 +2233,7 @@ function WebLinksPanel({
   onOpen: (server: ServerProfile, link: WebLink) => void;
 }) {
   return (
-    <section className="panel">
+    <section className="panel collapsible-panel">
       <div className="panel-heading">
         <h3>Web/Admin Links</h3>
         <button className="button compact" type="button" disabled={busy || Boolean(editingLink)} onClick={onAdd}>
@@ -2149,45 +2242,49 @@ function WebLinksPanel({
         </button>
       </div>
 
-      {editingLink ? (
-        <WebLinkForm form={editingLink} busy={busy} onCancel={onCancel} onSave={(form) => onSave(server, form)} />
-      ) : null}
+      <details className="section-disclosure" open>
+        <summary>Saved links</summary>
 
-      {loading ? <p className="muted">Loading web links...</p> : null}
+        {editingLink ? (
+          <WebLinkForm form={editingLink} busy={busy} onCancel={onCancel} onSave={(form) => onSave(server, form)} />
+        ) : null}
 
-      {!loading && links.length === 0 && !editingLink ? (
-        <div className="empty-inline">
-          <ExternalLink size={30} />
-          <strong>No web admin links yet</strong>
-          <span>Add URLs for dashboards like Proxmox, router admin, NAS, or monitoring pages.</span>
-        </div>
-      ) : null}
+        {loading ? <p className="muted">Loading web links...</p> : null}
 
-      {links.length > 0 ? (
-        <div className="web-link-list">
-          {links.map((link) => (
-            <div className="web-link-row" key={link.id}>
-              <ExternalLink size={18} />
-              <div>
-                <strong>{link.label}</strong>
-                <span>{link.url}</span>
+        {!loading && links.length === 0 && !editingLink ? (
+          <div className="empty-inline">
+            <ExternalLink size={30} />
+            <strong>No web admin links yet</strong>
+            <span>Add dashboard URLs for this host, such as Proxmox, router admin, NAS, or monitoring pages.</span>
+          </div>
+        ) : null}
+
+        {links.length > 0 ? (
+          <div className="web-link-list">
+            {links.map((link) => (
+              <div className="web-link-row" key={link.id}>
+                <ExternalLink size={18} />
+                <div>
+                  <strong>{link.label}</strong>
+                  <span>{link.url}</span>
+                </div>
+                <div className="row-actions">
+                  <button className="button compact" type="button" disabled={busy} onClick={() => onOpen(server, link)}>
+                    <ExternalLink size={15} />
+                    Open
+                  </button>
+                  <button className="icon-button" type="button" aria-label={`Edit ${link.label}`} disabled={busy} onClick={() => onEdit(link)}>
+                    <Pencil size={16} />
+                  </button>
+                  <button className="icon-button danger" type="button" aria-label={`Delete ${link.label}`} disabled={busy} onClick={() => onDelete(server, link)}>
+                    <Trash2 size={16} />
+                  </button>
+                </div>
               </div>
-              <div className="row-actions">
-                <button className="button compact" type="button" disabled={busy} onClick={() => onOpen(server, link)}>
-                  <ExternalLink size={15} />
-                  Open
-                </button>
-                <button className="icon-button" type="button" aria-label={`Edit ${link.label}`} disabled={busy} onClick={() => onEdit(link)}>
-                  <Pencil size={16} />
-                </button>
-                <button className="icon-button danger" type="button" aria-label={`Delete ${link.label}`} disabled={busy} onClick={() => onDelete(server, link)}>
-                  <Trash2 size={16} />
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : null}
+            ))}
+          </div>
+        ) : null}
+      </details>
     </section>
   );
 }
