@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   newRdpSettingsDraft,
   rdpCertificateModeLabel,
+  rdpScalingModeLabel,
   rdpSettingsSummary,
   toRdpSettingsInput,
   validateRdpSettingsForm,
@@ -84,6 +85,13 @@ describe("RDP form helpers", () => {
 
     expect(input.scalingMode).toBe("dynamic-resolution");
     expect(input.scalingPercent).toBeNull();
+  });
+
+  it("labels RDP scaling modes", () => {
+    expect(rdpScalingModeLabel("percentage")).toBe("Scale percentage");
+    expect(rdpScalingModeLabel("smart-sizing")).toBe("Smart sizing");
+    expect(rdpScalingModeLabel("dynamic-resolution")).toBe("Dynamic resolution");
+    expect(rdpScalingModeLabel("native")).toBe("Native / default");
   });
 
   it("formats settings summaries", () => {

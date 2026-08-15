@@ -1,5 +1,7 @@
 use std::{
-    path::Path,
+    ffi::OsStr,
+    fs,
+    path::{Path, PathBuf},
     sync::{Mutex, MutexGuard},
     time::Duration,
 };
@@ -51,19 +53,33 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "009_rdp_scaling_options",
         include_str!("../migrations/009_rdp_scaling_options.sql"),
     ),
+    (
+        "010_desktop_behavior_settings",
+        include_str!("../migrations/010_desktop_behavior_settings.sql"),
+    ),
 ];
 
 #[derive(Debug)]
 pub struct Database {
     conn: Mutex<Connection>,
+    path: Option<PathBuf>,
+    existed_with_data_at_open: bool,
+    unavailable_error: Option<String>,
 }
 
 impl Database {
     pub fn open(path: impl AsRef<Path>) -> AppResult<Self> {
-        let conn = Connection::open(path).map_err(to_error)?;
+        let path = path.as_ref().to_path_buf();
+        let existed_with_data_at_open = fs::metadata(&path)
+            .map(|metadata| metadata.len() > 0)
+            .unwrap_or(false);
+        let conn = Connection::open(&path).map_err(to_error)?;
         prepare_connection(&conn)?;
         Ok(Self {
             conn: Mutex::new(conn),
+            path: Some(path),
+            existed_with_data_at_open,
+            unavailable_error: None,
         })
     }
 
@@ -73,11 +89,34 @@ impl Database {
         prepare_connection(&conn)?;
         Ok(Self {
             conn: Mutex::new(conn),
+            path: None,
+            existed_with_data_at_open: false,
+            unavailable_error: None,
+        })
+    }
+
+    pub fn unavailable(message: String) -> AppResult<Self> {
+        let conn = Connection::open_in_memory().map_err(to_error)?;
+        Ok(Self {
+            conn: Mutex::new(conn),
+            path: None,
+            existed_with_data_at_open: false,
+            unavailable_error: Some(message),
         })
     }
 
     pub fn migrate(&self) -> AppResult<()> {
         let mut conn = self.lock()?;
+        verify_database_integrity(&conn, "before migration")?;
+
+        if self.existed_with_data_at_open && migrations_pending(&conn)? {
+            let path = self
+                .path
+                .as_deref()
+                .ok_or_else(|| "Database backup path is unavailable".to_string())?;
+            create_pre_migration_backup(&conn, path)?;
+        }
+
         conn.execute_batch(
             "
             PRAGMA foreign_keys = ON;
@@ -104,6 +143,8 @@ impl Database {
             .map_err(to_error)?;
             tx.commit().map_err(to_error)?;
         }
+
+        verify_database_integrity(&conn, "after migration")?;
 
         Ok(())
     }
@@ -485,7 +526,7 @@ impl Database {
         let settings = conn
             .query_row(
                 "
-                SELECT terminal_preference, safety_warnings_enabled
+                SELECT terminal_preference, safety_warnings_enabled, start_minimized, close_to_tray
                 FROM app_settings
                 WHERE id = 1
                 ",
@@ -494,6 +535,8 @@ impl Database {
                     Ok(AppSettings {
                         terminal_preference: row.get(0)?,
                         safety_warnings_enabled: row.get::<_, i64>(1)? == 1,
+                        start_minimized: row.get::<_, i64>(2)? == 1,
+                        close_to_tray: row.get::<_, i64>(3)? == 1,
                     })
                 },
             )
@@ -512,12 +555,16 @@ impl Database {
                 "
                 UPDATE app_settings
                 SET terminal_preference = ?1,
-                    safety_warnings_enabled = ?2
+                    safety_warnings_enabled = ?2,
+                    start_minimized = ?3,
+                    close_to_tray = ?4
                 WHERE id = 1
                 ",
                 params![
                     &input.terminal_preference,
-                    bool_to_i64(input.safety_warnings_enabled)
+                    bool_to_i64(input.safety_warnings_enabled),
+                    bool_to_i64(input.start_minimized),
+                    bool_to_i64(input.close_to_tray)
                 ],
             )
             .map_err(to_error)?;
@@ -525,12 +572,16 @@ impl Database {
         if updated == 0 {
             conn.execute(
                 "
-                INSERT INTO app_settings (id, terminal_preference, safety_warnings_enabled)
-                VALUES (1, ?1, ?2)
+                INSERT INTO app_settings (
+                    id, terminal_preference, safety_warnings_enabled, start_minimized, close_to_tray
+                )
+                VALUES (1, ?1, ?2, ?3, ?4)
                 ",
                 params![
                     &input.terminal_preference,
-                    bool_to_i64(input.safety_warnings_enabled)
+                    bool_to_i64(input.safety_warnings_enabled),
+                    bool_to_i64(input.start_minimized),
+                    bool_to_i64(input.close_to_tray)
                 ],
             )
             .map_err(to_error)?;
@@ -870,10 +921,76 @@ impl Database {
     }
 
     fn lock(&self) -> AppResult<MutexGuard<'_, Connection>> {
+        if let Some(error) = &self.unavailable_error {
+            return Err(error.clone());
+        }
+
         self.conn
             .lock()
             .map_err(|_| "Database lock was poisoned".to_string())
     }
+}
+
+fn verify_database_integrity(conn: &Connection, phase: &str) -> AppResult<()> {
+    let result = conn
+        .query_row("PRAGMA quick_check(1)", [], |row| row.get::<_, String>(0))
+        .map_err(to_error)?;
+    if result == "ok" {
+        Ok(())
+    } else {
+        Err(format!(
+            "Database integrity check failed {phase}: {result}. Stop using the database and restore a known-good backup before retrying."
+        ))
+    }
+}
+
+fn migrations_pending(conn: &Connection) -> AppResult<bool> {
+    if !database_table_exists(conn, "schema_migrations")? {
+        return Ok(true);
+    }
+
+    for (version, _) in MIGRATIONS {
+        if !migration_applied(conn, version)? {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
+fn database_table_exists(conn: &Connection, table_name: &str) -> AppResult<bool> {
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
+        params![table_name],
+        |row| row.get::<_, i64>(0),
+    )
+    .map(|value| value == 1)
+    .map_err(to_error)
+}
+
+fn create_pre_migration_backup(conn: &Connection, database_path: &Path) -> AppResult<PathBuf> {
+    let parent = database_path.parent().unwrap_or_else(|| Path::new("."));
+    let database_name = database_path
+        .file_name()
+        .and_then(OsStr::to_str)
+        .unwrap_or("ssh-buddy.sqlite3");
+    let timestamp = chrono::Utc::now().format("%Y%m%dT%H%M%S%.3fZ");
+    let backup_path = parent.join(format!(
+        "{database_name}.pre-migration-{timestamp}-{}.bak",
+        uuid::Uuid::new_v4()
+    ));
+    let backup_path_text = backup_path
+        .to_str()
+        .ok_or_else(|| "Database backup path is not valid UTF-8".to_string())?;
+
+    conn.execute("VACUUM INTO ?1", params![backup_path_text])
+        .map_err(|error| {
+            format!(
+                "Could not create the required pre-migration database backup: {error}. The original database was not modified."
+            )
+        })?;
+
+    Ok(backup_path)
 }
 
 fn prepare_connection(conn: &Connection) -> AppResult<()> {
@@ -1223,6 +1340,7 @@ mod tests {
         AppSettings, GroupInput, RdpSettingsInput, ServerInput, SshKeyInput, TunnelInput,
         WebLinkInput,
     };
+    use tempfile::tempdir;
 
     fn test_db() -> Database {
         let db = Database::open_in_memory().unwrap();
@@ -1277,21 +1395,166 @@ mod tests {
         assert!(db
             .column_exists("server_rdp_settings", "scaling_percent")
             .unwrap());
+        assert!(db.column_exists("app_settings", "start_minimized").unwrap());
+        assert!(db.column_exists("app_settings", "close_to_tray").unwrap());
+
+        let settings = db.get_settings().unwrap();
+        assert!(!settings.start_minimized);
+        assert!(!settings.close_to_tray);
+    }
+
+    #[test]
+    fn v0_6_0_fixture_upgrades_without_losing_saved_data() {
+        let dir = tempdir().unwrap();
+        let database_path = dir.path().join("ssh-buddy.sqlite3");
+        let fixture = Connection::open(&database_path).unwrap();
+        fixture
+            .execute_batch(include_str!("../test-fixtures/v0.6.0.sql"))
+            .unwrap();
+        drop(fixture);
+
+        let db = Database::open(&database_path).unwrap();
+        db.migrate().unwrap();
+
+        let servers = db.list_servers().unwrap();
+        assert_eq!(servers.len(), 1);
+        assert_eq!(servers[0].id, "srv_fixture");
+        assert_eq!(servers[0].host, "nas.fixture.invalid");
+        assert_eq!(
+            servers[0].proxy_jump.as_deref(),
+            Some("jump.fixture.invalid")
+        );
+        assert_eq!(servers[0].group_id.as_deref(), Some("grp_fixture"));
+        assert_eq!(servers[0].identity_file_id.as_deref(), Some("key_fixture"));
+        assert_eq!(servers[0].tags[0].name, "fixture");
+        let groups = db.list_groups().unwrap();
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].id, "grp_fixture");
+        let keys = db.list_ssh_key_refs().unwrap();
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].id, "key_fixture");
+        assert_eq!(keys[0].path, "~/.ssh/id_fixture");
+        let settings = db.get_settings().unwrap();
+        assert_eq!(settings.terminal_preference, "konsole");
+        assert!(settings.safety_warnings_enabled);
+        assert!(!settings.start_minimized);
+        assert!(!settings.close_to_tray);
+        let links = db.list_web_links("srv_fixture").unwrap();
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].id, "web_fixture");
+        let tunnels = db.list_tunnels("srv_fixture").unwrap();
+        assert_eq!(tunnels.len(), 1);
+        assert_eq!(tunnels[0].id, "tun_fixture");
+        let rdp = db.get_rdp_settings("srv_fixture").unwrap().unwrap();
+        assert_eq!(rdp.scaling_percent, Some(140));
+        assert_eq!(rdp.monitor_ids.as_deref(), Some("0,1"));
+    }
+
+    #[test]
+    fn v0_6_0_fixture_backup_preserves_the_original_schema_and_data() {
+        let dir = tempdir().unwrap();
+        let database_path = dir.path().join("ssh-buddy.sqlite3");
+        let fixture = Connection::open(&database_path).unwrap();
+        fixture
+            .execute_batch(include_str!("../test-fixtures/v0.6.0.sql"))
+            .unwrap();
+        drop(fixture);
+
+        let db = Database::open(&database_path).unwrap();
+        db.migrate().unwrap();
+        assert!(db.column_exists("app_settings", "start_minimized").unwrap());
+
+        let backup_path = fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .find(|path| {
+                path.file_name()
+                    .and_then(OsStr::to_str)
+                    .is_some_and(|name| name.contains(".pre-migration-") && name.ends_with(".bak"))
+            })
+            .expect("a pre-migration backup should be created");
+        let backup = Connection::open(backup_path).unwrap();
+        verify_database_integrity(&backup, "in pre-migration backup").unwrap();
+
+        let migration_010_count: i64 = backup
+            .query_row(
+                "SELECT COUNT(*) FROM schema_migrations WHERE version = '010_desktop_behavior_settings'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(migration_010_count, 0);
+        for column in ["start_minimized", "close_to_tray"] {
+            let count: i64 = backup
+                .query_row(
+                    "SELECT COUNT(*) FROM pragma_table_info('app_settings') WHERE name = ?1",
+                    params![column],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(count, 0, "{column} must not exist in the pre-010 backup");
+        }
+
+        for (table, expected_id) in [
+            ("groups", "grp_fixture"),
+            ("ssh_key_refs", "key_fixture"),
+            ("server_profiles", "srv_fixture"),
+            ("tags", "tag_fixture"),
+            ("server_web_links", "web_fixture"),
+            ("server_tunnels", "tun_fixture"),
+        ] {
+            let id: String = backup
+                .query_row(&format!("SELECT id FROM {table} LIMIT 1"), [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert_eq!(id, expected_id);
+        }
+        let tag_link_count: i64 = backup
+            .query_row("SELECT COUNT(*) FROM server_profile_tags", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(tag_link_count, 1);
+        let rdp_server_id: String = backup
+            .query_row(
+                "SELECT server_profile_id FROM server_rdp_settings",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(rdp_server_id, "srv_fixture");
+        let terminal_preference: String = backup
+            .query_row(
+                "SELECT terminal_preference FROM app_settings WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(terminal_preference, "konsole");
     }
 
     #[test]
     fn settings_round_trip_and_reject_invalid_terminal() {
         let db = test_db();
-        assert_eq!(db.get_settings().unwrap().terminal_preference, "auto");
+        let defaults = db.get_settings().unwrap();
+        assert_eq!(defaults.terminal_preference, "auto");
+        assert!(!defaults.start_minimized);
+        assert!(!defaults.close_to_tray);
 
         let saved = db
             .save_settings(AppSettings {
                 terminal_preference: "konsole".to_string(),
                 safety_warnings_enabled: false,
+                start_minimized: true,
+                close_to_tray: true,
             })
             .unwrap();
         assert_eq!(saved.terminal_preference, "konsole");
         assert!(!saved.safety_warnings_enabled);
+        assert!(saved.start_minimized);
+        assert!(saved.close_to_tray);
 
         let loaded = db.get_settings().unwrap();
         assert_eq!(loaded, saved);
@@ -1300,6 +1563,8 @@ mod tests {
             db.save_settings(AppSettings {
                 terminal_preference: "powershell".to_string(),
                 safety_warnings_enabled: true,
+                start_minimized: false,
+                close_to_tray: false,
             })
             .unwrap_err(),
             "Unsupported terminal preference"
@@ -1328,6 +1593,30 @@ mod tests {
         assert_eq!(db.list_servers().unwrap().len(), 1);
         db.delete_server(&created.id).unwrap();
         assert!(db.list_servers().unwrap().is_empty());
+    }
+
+    #[test]
+    fn server_create_and_update_reject_unsafe_ssh_destinations() {
+        let db = test_db();
+        let mut unsafe_create = server_input();
+        unsafe_create.host = "-oProxyCommand=touch".to_string();
+        assert_eq!(
+            db.create_server(unsafe_create).unwrap_err(),
+            "Host must not start with '-'"
+        );
+        assert!(db.list_servers().unwrap().is_empty());
+
+        let created = db.create_server(server_input()).unwrap();
+        let mut unsafe_update = server_input();
+        unsafe_update.username = "-Fmalicious-config".to_string();
+        assert_eq!(
+            db.update_server(&created.id, unsafe_update).unwrap_err(),
+            "Username must not start with '-'"
+        );
+        assert_eq!(
+            db.get_server(&created.id).unwrap().unwrap().username,
+            "admin"
+        );
     }
 
     #[test]

@@ -1,18 +1,23 @@
 use std::{
+    collections::BTreeMap,
     env,
-    ffi::OsString,
+    ffi::{OsStr, OsString},
     fs,
+    io::Read,
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
+    thread,
+    time::Duration,
 };
 
 use crate::domain::{
     normalize_tunnel_bind_host, validate_proxy_jump, validate_rdp_monitor_ids,
-    validate_tunnel_input, AppResult, AppSettings, LaunchBinaryStatus, LaunchDiagnostics,
-    RdpSettings, ServerProfile, Tunnel, TunnelInput, RDP_CERTIFICATE_MODE_IGNORE,
-    RDP_CERTIFICATE_MODE_PROMPT, RDP_CERTIFICATE_MODE_TOFU, RDP_SCALING_MODE_DYNAMIC_RESOLUTION,
-    RDP_SCALING_MODE_NATIVE, RDP_SCALING_MODE_PERCENTAGE, RDP_SCALING_MODE_SMART_SIZING,
-    SUPPORTED_RDP_SCALING_PERCENTS, SUPPORTED_TERMINAL_PREFERENCES, TERMINAL_PREFERENCE_AUTO,
+    validate_ssh_destination, validate_tunnel_input, AppResult, AppSettings, LaunchBinaryStatus,
+    LaunchDiagnostics, RdpSettings, ServerProfile, TerminalAvailability, Tunnel, TunnelInput,
+    RDP_CERTIFICATE_MODE_IGNORE, RDP_CERTIFICATE_MODE_PROMPT, RDP_CERTIFICATE_MODE_TOFU,
+    RDP_SCALING_MODE_DYNAMIC_RESOLUTION, RDP_SCALING_MODE_NATIVE, RDP_SCALING_MODE_PERCENTAGE,
+    RDP_SCALING_MODE_SMART_SIZING, SUPPORTED_RDP_SCALING_PERCENTS, SUPPORTED_TERMINAL_PREFERENCES,
+    TERMINAL_PREFERENCE_AUTO,
 };
 
 const TERMINAL_ORDER: &[&str] = &[
@@ -24,12 +29,56 @@ const TERMINAL_ORDER: &[&str] = &[
     "xterm",
 ];
 const RDP_CLIENT_ORDER: &[&str] = &["xfreerdp3", "xfreerdp"];
+const IMMEDIATE_EXIT_CHECKS: usize = 8;
+const IMMEDIATE_EXIT_INTERVAL: Duration = Duration::from_millis(75);
+const STDERR_LIMIT_BYTES: usize = 2_048;
+const APPIMAGE_PATH_VARIABLES: &[&str] = &[
+    "PATH",
+    "LD_LIBRARY_PATH",
+    "LD_PRELOAD",
+    "XDG_DATA_DIRS",
+    "XDG_CONFIG_DIRS",
+    "GTK_PATH",
+    "GTK_DATA_PREFIX",
+    "GDK_PIXBUF_MODULE_FILE",
+    "GIO_EXTRA_MODULES",
+    "GSETTINGS_SCHEMA_DIR",
+    "GI_TYPELIB_PATH",
+    "GST_PLUGIN_PATH",
+    "GST_PLUGIN_SYSTEM_PATH",
+    "QT_PLUGIN_PATH",
+    "QML2_IMPORT_PATH",
+];
+const APPIMAGE_RUNTIME_VARIABLES: &[&str] = &["APPIMAGE", "APPDIR", "ARGV0", "OWD"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProcessCommand {
     pub program: String,
     pub args: Vec<String>,
 }
+
+#[derive(Debug, Clone)]
+struct HostLaunchEnvironment {
+    variables: BTreeMap<OsString, OsString>,
+    sanitized: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ProcessObservation {
+    Running,
+    Exited { code: Option<i32>, stderr: String },
+    SpawnFailed(String),
+}
+
+trait ProcessRunner {
+    fn launch(
+        &self,
+        command: &ProcessCommand,
+        environment: &HostLaunchEnvironment,
+    ) -> ProcessObservation;
+}
+
+struct SystemProcessRunner;
 
 pub fn build_ssh_argv(
     server: &ServerProfile,
@@ -40,7 +89,7 @@ pub fn build_ssh_argv(
     let mut argv = vec!["ssh".to_string()];
     append_profile_ssh_options(&mut argv, server, identity_file)?;
 
-    argv.push(destination_for(server));
+    argv.push(destination_for(server)?);
 
     Ok(argv)
 }
@@ -53,7 +102,7 @@ pub fn build_sftp_argv(
 
     let mut argv = vec!["sftp".to_string()];
     append_profile_sftp_options(&mut argv, server, identity_file)?;
-    argv.push(destination_for(server));
+    argv.push(destination_for(server)?);
 
     Ok(argv)
 }
@@ -87,7 +136,7 @@ pub fn build_install_public_key_argv(
         argv.push(format!("ProxyJump={proxy_jump}"));
     }
 
-    argv.push(destination_for(server));
+    argv.push(destination_for(server)?);
 
     Ok(argv)
 }
@@ -203,7 +252,7 @@ pub fn build_tunnel_argv(
         tunnel_spec,
     ];
     append_profile_ssh_options(&mut argv, server, identity_file)?;
-    argv.push(destination_for(server));
+    argv.push(destination_for(server)?);
 
     Ok(argv)
 }
@@ -384,11 +433,13 @@ fn append_profile_sftp_options(
     Ok(())
 }
 
-fn destination_for(server: &ServerProfile) -> String {
-    if server.username.trim().is_empty() {
-        server.host.trim().to_string()
+fn destination_for(server: &ServerProfile) -> AppResult<String> {
+    validate_ssh_destination(&server.host, &server.username)?;
+
+    if server.username.is_empty() {
+        Ok(server.host.clone())
     } else {
-        format!("{}@{}", server.username.trim(), server.host.trim())
+        Ok(format!("{}@{}", server.username, server.host))
     }
 }
 
@@ -433,7 +484,12 @@ pub fn terminal_command_for(terminal: &str, command_argv: &[String]) -> AppResul
     }
 
     let mut args = match terminal {
-        "konsole" => vec!["--noclose".to_string(), "-e".to_string()],
+        // KDE documents --separate as the way to avoid process reuse and requires -e last.
+        "konsole" => vec![
+            "--separate".to_string(),
+            "--noclose".to_string(),
+            "-e".to_string(),
+        ],
         "kitty" => Vec::new(),
         "alacritty" => vec!["-e".to_string()],
         "wezterm" => vec!["start".to_string(), "--".to_string()],
@@ -627,10 +683,13 @@ where
                     public_key_path: key_details.public_key_path,
                     public_key_file_exists: key_details.public_key_file_exists,
                     required_binaries,
-                    backend_result: "spawned".to_string(),
+                    backend_result: "preflightPassed".to_string(),
                     message: format!(
-                        "SSH-Buddy started the external terminal process ({terminal}) for ssh-copy-id. Password and host-key prompts will appear in that terminal. If no window appears or it closes immediately, copy the command below and run it manually to see the ssh-copy-id error."
+                        "SSH-Buddy is ready to start {terminal} for ssh-copy-id. Password and host-key prompts will appear in that terminal."
                     ),
+                    exit_code: None,
+                    stderr: None,
+                    environment_sanitized: false,
                     free_rdp_executable: None,
                     launched_via_terminal: None,
                     certificate_mode: None,
@@ -666,8 +725,11 @@ where
                 public_key_path: key_details.public_key_path,
                 public_key_file_exists: key_details.public_key_file_exists,
                 required_binaries,
-                backend_result: "preflightFailed".to_string(),
+                backend_result: preflight_failure_result(&error).to_string(),
                 message: error,
+                exit_code: None,
+                stderr: None,
+                environment_sanitized: false,
                 free_rdp_executable: None,
                 launched_via_terminal: None,
                 certificate_mode: None,
@@ -760,10 +822,13 @@ where
                     public_key_path: None,
                     public_key_file_exists: None,
                     required_binaries: rdp_terminal_binary_statuses(&available),
-                    backend_result: "spawned".to_string(),
+                    backend_result: "preflightPassed".to_string(),
                     message: format!(
-                        "SSH-Buddy started the external terminal process ({terminal}) for {client}. FreeRDP certificate and credential prompts should appear in that terminal. If no window appears or it closes immediately, copy the command below and run it manually to see the RDP error."
+                        "SSH-Buddy is ready to start {terminal} for {client}. FreeRDP certificate and credential prompts should appear in that terminal."
                     ),
+                    exit_code: None,
+                    stderr: None,
+                    environment_sanitized: false,
                     free_rdp_executable: Some(client),
                     launched_via_terminal: Some(true),
                     certificate_mode: Some(rdp_settings.certificate_mode.clone()),
@@ -803,8 +868,11 @@ where
                 public_key_path: None,
                 public_key_file_exists: None,
                 required_binaries: rdp_terminal_binary_statuses(&available),
-                backend_result: "preflightFailed".to_string(),
+                backend_result: preflight_failure_result(&error).to_string(),
                 message: error,
+                exit_code: None,
+                stderr: None,
+                environment_sanitized: false,
                 free_rdp_executable,
                 launched_via_terminal: Some(false),
                 certificate_mode: Some(rdp_settings.certificate_mode.clone()),
@@ -863,10 +931,13 @@ where
                     public_key_path: None,
                     public_key_file_exists: None,
                     required_binaries,
-                    backend_result: "spawned".to_string(),
+                    backend_result: "preflightPassed".to_string(),
                     message: format!(
-                        "SSH-Buddy started the external terminal process ({terminal}) with a harmless printf command. Konsole should stay open because SSH-Buddy launches it with --noclose."
+                        "SSH-Buddy is ready to start {terminal} with a harmless printf command. Konsole should stay open because SSH-Buddy launches it with --noclose."
                     ),
+                    exit_code: None,
+                    stderr: None,
+                    environment_sanitized: false,
                     free_rdp_executable: None,
                     launched_via_terminal: None,
                     certificate_mode: None,
@@ -902,8 +973,11 @@ where
                 public_key_path: None,
                 public_key_file_exists: None,
                 required_binaries,
-                backend_result: "preflightFailed".to_string(),
+                backend_result: preflight_failure_result(&error).to_string(),
                 message: error,
+                exit_code: None,
+                stderr: None,
+                environment_sanitized: false,
                 free_rdp_executable: None,
                 launched_via_terminal: None,
                 certificate_mode: None,
@@ -982,10 +1056,11 @@ where
                     public_key_path: key_details.public_key_path,
                     public_key_file_exists: key_details.public_key_file_exists,
                     required_binaries,
-                    backend_result: "spawned".to_string(),
-                    message: format!(
-                        "SSH-Buddy started the external terminal process ({terminal}). If no window appears or it closes immediately, copy the command below and run it manually to see the {action_label} error."
-                    ),
+                    backend_result: "preflightPassed".to_string(),
+                    message: format!("SSH-Buddy is ready to start {terminal} for {action_label}."),
+                    exit_code: None,
+                    stderr: None,
+                    environment_sanitized: false,
                     free_rdp_executable: None,
                     launched_via_terminal: None,
                     certificate_mode: None,
@@ -1021,8 +1096,11 @@ where
                 public_key_path: key_details.public_key_path,
                 public_key_file_exists: key_details.public_key_file_exists,
                 required_binaries,
-                backend_result: "preflightFailed".to_string(),
+                backend_result: preflight_failure_result(&error).to_string(),
                 message: error,
+                exit_code: None,
+                stderr: None,
+                environment_sanitized: false,
                 free_rdp_executable: None,
                 launched_via_terminal: None,
                 certificate_mode: None,
@@ -1049,19 +1127,184 @@ where
 }
 
 fn spawn_with_diagnostics(
+    diagnostics: LaunchDiagnostics,
+    command: Option<ProcessCommand>,
+) -> LaunchDiagnostics {
+    let environment = host_launch_environment();
+    spawn_with_diagnostics_using(diagnostics, command, &SystemProcessRunner, &environment)
+}
+
+fn spawn_with_diagnostics_using<R: ProcessRunner>(
     mut diagnostics: LaunchDiagnostics,
     command: Option<ProcessCommand>,
+    runner: &R,
+    environment: &HostLaunchEnvironment,
 ) -> LaunchDiagnostics {
     let Some(command) = command else {
         return diagnostics;
     };
 
-    if let Err(error) = Command::new(&command.program).args(&command.args).spawn() {
-        diagnostics.backend_result = "spawnFailed".to_string();
-        diagnostics.message = format!("Failed to launch {}: {error}", command.program);
-    }
+    let Some(executable) = command_path_in(
+        &command.program,
+        environment.variables.get(OsStr::new("PATH")),
+    ) else {
+        diagnostics.backend_result = "notFound".to_string();
+        diagnostics.message = format!(
+            "The selected terminal '{}' was no longer available when launch was attempted. Recheck terminal availability and try again.",
+            diagnostics
+                .selected_terminal_or_client
+                .as_deref()
+                .unwrap_or(&command.program)
+        );
+        diagnostics.executable = None;
+        return diagnostics;
+    };
+
+    let resolved_command = ProcessCommand {
+        program: executable.to_string_lossy().into_owned(),
+        args: command.args,
+    };
+    diagnostics.executable = Some(resolved_command.program.clone());
+    diagnostics.argv_preview = Some(process_command_to_display(&resolved_command));
+    diagnostics.environment_sanitized = environment.sanitized;
+
+    apply_process_observation(
+        &mut diagnostics,
+        runner.launch(&resolved_command, environment),
+    );
 
     diagnostics
+}
+
+fn apply_process_observation(diagnostics: &mut LaunchDiagnostics, observation: ProcessObservation) {
+    let subject = diagnostics
+        .selected_terminal_or_client
+        .as_deref()
+        .unwrap_or("external terminal");
+
+    match observation {
+        ProcessObservation::Running => {
+            diagnostics.backend_result = "started".to_string();
+            diagnostics.message = format!(
+                "Started {subject}; it remained running through the immediate-failure check. This confirms the terminal launch, not an SSH or RDP connection."
+            );
+        }
+        ProcessObservation::Exited {
+            code: Some(0),
+            stderr,
+        } => {
+            diagnostics.backend_result = "started".to_string();
+            diagnostics.exit_code = Some(0);
+            diagnostics.stderr = normalize_stderr(&stderr);
+            diagnostics.message = format!(
+                "Started {subject}; its launcher exited successfully during the immediate-failure check after handing off. This confirms the terminal launch request, not an SSH or RDP connection."
+            );
+        }
+        ProcessObservation::Exited { code, stderr } => {
+            diagnostics.backend_result = "exitedImmediately".to_string();
+            diagnostics.exit_code = code;
+            diagnostics.stderr = normalize_stderr(&stderr);
+            let status = code
+                .map(|value| format!("exit code {value}"))
+                .unwrap_or_else(|| "a terminating signal".to_string());
+            let stderr_hint = diagnostics
+                .stderr
+                .as_deref()
+                .map(|value| format!(" Error: {value}"))
+                .unwrap_or_default();
+            diagnostics.message = format!(
+                "{subject} exited immediately with {status}.{stderr_hint} Check the executable and AppImage troubleshooting guidance."
+            );
+        }
+        ProcessObservation::SpawnFailed(error) => {
+            diagnostics.backend_result = "spawnFailed".to_string();
+            diagnostics.message = format!("Failed to launch {subject}: {error}");
+        }
+    }
+}
+
+impl ProcessRunner for SystemProcessRunner {
+    fn launch(
+        &self,
+        command: &ProcessCommand,
+        environment: &HostLaunchEnvironment,
+    ) -> ProcessObservation {
+        let mut process = Command::new(&command.program);
+        process
+            .args(&command.args)
+            .env_clear()
+            .envs(environment.variables.iter())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped());
+
+        let mut child = match process.spawn() {
+            Ok(child) => child,
+            Err(error) => return ProcessObservation::SpawnFailed(error.to_string()),
+        };
+
+        let stderr_reader = child.stderr.take().map(|mut stderr| {
+            thread::spawn(move || {
+                let mut captured = Vec::new();
+                let mut buffer = [0_u8; 512];
+                loop {
+                    match stderr.read(&mut buffer) {
+                        Ok(0) | Err(_) => break,
+                        Ok(read) => {
+                            let remaining = STDERR_LIMIT_BYTES.saturating_sub(captured.len());
+                            captured.extend_from_slice(&buffer[..read.min(remaining)]);
+                        }
+                    }
+                }
+                String::from_utf8_lossy(&captured).into_owned()
+            })
+        });
+
+        for _ in 0..IMMEDIATE_EXIT_CHECKS {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    let stderr = stderr_reader
+                        .and_then(|reader| reader.join().ok())
+                        .unwrap_or_default();
+                    return ProcessObservation::Exited {
+                        code: status.code(),
+                        stderr,
+                    };
+                }
+                Ok(None) => thread::sleep(IMMEDIATE_EXIT_INTERVAL),
+                Err(error) => return ProcessObservation::SpawnFailed(error.to_string()),
+            }
+        }
+
+        ProcessObservation::Running
+    }
+}
+
+fn normalize_stderr(stderr: &str) -> Option<String> {
+    let mut normalized = String::new();
+    for character in stderr
+        .chars()
+        .filter(|character| !character.is_control() || matches!(character, '\n' | '\r' | '\t'))
+    {
+        if normalized.len() + character.len_utf8() > STDERR_LIMIT_BYTES {
+            break;
+        }
+        normalized.push(character);
+    }
+    let normalized = normalized.trim();
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(normalized.to_string())
+    }
+}
+
+fn preflight_failure_result(error: &str) -> &'static str {
+    if error.contains("was not found in PATH") || error.starts_with("No supported ") {
+        "notFound"
+    } else {
+        "preflightFailed"
+    }
 }
 
 struct KeyDiagnostics {
@@ -1106,6 +1349,7 @@ where
         .into_iter()
         .map(|name| LaunchBinaryStatus {
             exists: available(&name),
+            executable: command_path(&name).map(|path| path.to_string_lossy().into_owned()),
             name,
         })
         .collect()
@@ -1128,6 +1372,7 @@ where
         .into_iter()
         .map(|name| LaunchBinaryStatus {
             exists: available(&name),
+            executable: command_path(&name).map(|path| path.to_string_lossy().into_owned()),
             name,
         })
         .collect()
@@ -1278,13 +1523,32 @@ pub(crate) fn command_in_path(command: &str) -> bool {
 }
 
 fn command_path(command: &str) -> Option<PathBuf> {
-    let Some(path_var) = env::var_os("PATH") else {
-        return None;
-    };
+    let environment = host_launch_environment();
+    command_path_in(command, environment.variables.get(OsStr::new("PATH")))
+}
 
-    env::split_paths(&path_var).find_map(|path| {
+fn command_path_in(command: &str, path_var: Option<&OsString>) -> Option<PathBuf> {
+    command_path_in_with(command, path_var, is_executable_file)
+}
+
+fn command_path_in_with<F>(
+    command: &str,
+    path_var: Option<&OsString>,
+    is_executable: F,
+) -> Option<PathBuf>
+where
+    F: Fn(&Path) -> bool,
+{
+    let direct_path = Path::new(command);
+    if direct_path.is_absolute() || direct_path.components().count() > 1 {
+        return is_executable(direct_path).then(|| direct_path.to_path_buf());
+    }
+
+    let path_var = path_var?;
+
+    env::split_paths(path_var).find_map(|path| {
         let candidate = path.join(command);
-        if is_executable_file(&candidate) {
+        if is_executable(&candidate) {
             Some(candidate)
         } else {
             None
@@ -1296,6 +1560,130 @@ fn executable_display(program: &str) -> String {
     command_path(program)
         .map(|path| path.to_string_lossy().into_owned())
         .unwrap_or_else(|| program.to_string())
+}
+
+pub fn terminal_availability() -> Vec<TerminalAvailability> {
+    let environment = host_launch_environment();
+    terminal_availability_with(|terminal| {
+        command_path_in(terminal, environment.variables.get(OsStr::new("PATH")))
+    })
+}
+
+fn terminal_availability_with<F>(resolver: F) -> Vec<TerminalAvailability>
+where
+    F: Fn(&str) -> Option<PathBuf>,
+{
+    TERMINAL_ORDER
+        .iter()
+        .map(|terminal| {
+            let executable = resolver(terminal).map(|path| path.to_string_lossy().into_owned());
+            TerminalAvailability {
+                preference: (*terminal).to_string(),
+                label: terminal_label(terminal).to_string(),
+                available: executable.is_some(),
+                executable,
+            }
+        })
+        .collect()
+}
+
+fn host_launch_environment() -> HostLaunchEnvironment {
+    host_launch_environment_from(env::vars_os())
+}
+
+fn host_launch_environment_from<I>(variables: I) -> HostLaunchEnvironment
+where
+    I: IntoIterator<Item = (OsString, OsString)>,
+{
+    let mut variables = variables.into_iter().collect::<BTreeMap<_, _>>();
+    let appdir = variables
+        .get(OsStr::new("APPDIR"))
+        .filter(|value| !value.is_empty())
+        .map(|value| PathBuf::from(value.as_os_str()));
+    let is_appimage = appdir.is_some() || variables.contains_key(OsStr::new("APPIMAGE"));
+
+    if !is_appimage {
+        return HostLaunchEnvironment {
+            variables,
+            sanitized: false,
+        };
+    }
+
+    for name in APPIMAGE_PATH_VARIABLES {
+        restore_or_filter_appimage_variable(&mut variables, name, appdir.as_deref());
+    }
+
+    for name in APPIMAGE_RUNTIME_VARIABLES {
+        variables.remove(OsStr::new(name));
+    }
+
+    HostLaunchEnvironment {
+        variables,
+        sanitized: true,
+    }
+}
+
+fn restore_or_filter_appimage_variable(
+    variables: &mut BTreeMap<OsString, OsString>,
+    name: &str,
+    appdir: Option<&Path>,
+) {
+    let original_name = format!("{name}_ORIG");
+    if let Some(original) = variables.remove(OsStr::new(original_name.as_str())) {
+        if original.is_empty() {
+            variables.remove(OsStr::new(name));
+        } else {
+            variables.insert(OsString::from(name), original);
+        }
+        return;
+    }
+
+    let Some(appdir) = appdir else {
+        return;
+    };
+    let Some(current) = variables.get(OsStr::new(name)).cloned() else {
+        return;
+    };
+
+    let entries = if name == "LD_PRELOAD" {
+        split_ld_preload_paths(&current)
+    } else {
+        env::split_paths(&current).collect()
+    };
+    let filtered = entries
+        .into_iter()
+        .filter(|entry| !entry.starts_with(appdir))
+        .collect::<Vec<_>>();
+    match env::join_paths(filtered) {
+        Ok(value) if !value.is_empty() => {
+            variables.insert(OsString::from(name), value);
+        }
+        _ => {
+            variables.remove(OsStr::new(name));
+        }
+    }
+}
+
+#[cfg(unix)]
+fn split_ld_preload_paths(value: &OsStr) -> Vec<PathBuf> {
+    use std::os::unix::ffi::OsStrExt;
+
+    value
+        .as_bytes()
+        .split(|byte| *byte == b':' || byte.is_ascii_whitespace())
+        .filter(|entry| !entry.is_empty())
+        .map(|entry| PathBuf::from(OsStr::from_bytes(entry)))
+        .collect()
+}
+
+#[cfg(not(unix))]
+fn split_ld_preload_paths(value: &OsStr) -> Vec<PathBuf> {
+    value
+        .to_string_lossy()
+        .split(|character: char| character == ':' || character.is_ascii_whitespace())
+        .filter(|entry| !entry.is_empty())
+        .map(PathBuf::from)
+        .collect()
 }
 
 fn is_executable_file(path: &Path) -> bool {
@@ -1421,6 +1809,20 @@ mod tests {
     use crate::domain::Tag;
     use tempfile::tempdir;
 
+    struct FakeProcessRunner {
+        observation: ProcessObservation,
+    }
+
+    impl ProcessRunner for FakeProcessRunner {
+        fn launch(
+            &self,
+            _command: &ProcessCommand,
+            _environment: &HostLaunchEnvironment,
+        ) -> ProcessObservation {
+            self.observation.clone()
+        }
+    }
+
     fn sample_server() -> ServerProfile {
         ServerProfile {
             id: "srv".to_string(),
@@ -1443,6 +1845,8 @@ mod tests {
         AppSettings {
             terminal_preference: TERMINAL_PREFERENCE_AUTO.to_string(),
             safety_warnings_enabled: true,
+            start_minimized: false,
+            close_to_tray: false,
         }
     }
 
@@ -1482,6 +1886,19 @@ mod tests {
         }
     }
 
+    fn assert_all_ssh_builders_reject(server: &ServerProfile, expected: &str) {
+        assert_eq!(build_ssh_argv(server, None).unwrap_err(), expected);
+        assert_eq!(build_sftp_argv(server, None).unwrap_err(), expected);
+        assert_eq!(
+            build_install_public_key_argv(server, "/home/user/.ssh/id_ed25519").unwrap_err(),
+            expected
+        );
+        assert_eq!(
+            build_tunnel_argv(server, None, &sample_tunnel()).unwrap_err(),
+            expected
+        );
+    }
+
     #[test]
     fn builds_ssh_argv_with_profile_fields() {
         let argv = build_ssh_argv(&sample_server(), Some("/home/user/.ssh/id_ed25519")).unwrap();
@@ -1503,11 +1920,60 @@ mod tests {
     fn builds_ssh_argv_with_default_user_key_and_port() {
         let mut server = sample_server();
         server.port = 22;
-        server.username = " ".to_string();
+        server.username = String::new();
 
         let argv = build_ssh_argv(&server, None).unwrap();
 
         assert_eq!(argv, vec!["ssh", "nas.local"]);
+    }
+
+    #[test]
+    fn builds_all_ssh_destinations_for_scoped_ipv6() {
+        let mut server = sample_server();
+        server.host = "fe80::1%eth0".to_string();
+
+        for argv in [
+            build_ssh_argv(&server, None).unwrap(),
+            build_sftp_argv(&server, None).unwrap(),
+            build_install_public_key_argv(&server, "/home/user/.ssh/id_ed25519").unwrap(),
+            build_tunnel_argv(&server, None, &sample_tunnel()).unwrap(),
+        ] {
+            assert_eq!(argv.last().map(String::as_str), Some("admin@fe80::1%eth0"));
+        }
+
+        server.host = "prod_web+blue".to_string();
+        assert_eq!(
+            build_ssh_argv(&server, None)
+                .unwrap()
+                .last()
+                .map(String::as_str),
+            Some("admin@prod_web+blue")
+        );
+    }
+
+    #[test]
+    fn rejects_unsafe_destinations_for_all_ssh_actions() {
+        let mut server = sample_server();
+        server.host = "-oProxyCommand=touch".to_string();
+        assert_all_ssh_builders_reject(&server, "Host must not start with '-'");
+
+        let mut server = sample_server();
+        server.username = "-Fmalicious-config".to_string();
+        assert_all_ssh_builders_reject(&server, "Username must not start with '-'");
+
+        let mut server = sample_server();
+        server.host = "nas local".to_string();
+        assert_all_ssh_builders_reject(
+            &server,
+            "Host must not contain whitespace or control characters",
+        );
+
+        let mut server = sample_server();
+        server.username = "admin\u{7}".to_string();
+        assert_all_ssh_builders_reject(
+            &server,
+            "Username must not contain whitespace or control characters",
+        );
     }
 
     #[test]
@@ -1629,6 +2095,20 @@ mod tests {
         assert_eq!(
             build_install_public_key_argv(&server, "/home/user/.ssh/id_ed25519").unwrap_err(),
             "Username is required to install a public key"
+        );
+    }
+
+    #[test]
+    fn rejects_legacy_whitespace_username_for_other_ssh_actions() {
+        let mut server = sample_server();
+        server.username = " ".to_string();
+        let expected = "Username must not contain whitespace or control characters";
+
+        assert_eq!(build_ssh_argv(&server, None).unwrap_err(), expected);
+        assert_eq!(build_sftp_argv(&server, None).unwrap_err(), expected);
+        assert_eq!(
+            build_tunnel_argv(&server, None, &sample_tunnel()).unwrap_err(),
+            expected
         );
     }
 
@@ -1902,7 +2382,7 @@ mod tests {
             terminal_command_for("konsole", &ssh_argv).unwrap(),
             ProcessCommand {
                 program: "konsole".to_string(),
-                args: vec!["--noclose", "-e", "ssh", "nas.local"]
+                args: vec!["--separate", "--noclose", "-e", "ssh", "nas.local"]
                     .into_iter()
                     .map(String::from)
                     .collect()
@@ -1959,8 +2439,9 @@ mod tests {
         .unwrap();
 
         assert_eq!(command.program, "konsole");
-        assert_eq!(command.args[0], "--noclose");
-        assert_eq!(command.args[1], "-e");
+        assert_eq!(command.args[0], "--separate");
+        assert_eq!(command.args[1], "--noclose");
+        assert_eq!(command.args[2], "-e");
         assert!(command.args.contains(&"printf".to_string()));
         assert!(command
             .args
@@ -2110,7 +2591,7 @@ mod tests {
         );
 
         assert!(command.is_some());
-        assert_eq!(diagnostics.backend_result, "spawned");
+        assert_eq!(diagnostics.backend_result, "preflightPassed");
         assert_eq!(
             diagnostics.selected_terminal_or_client,
             Some("konsole".to_string())
@@ -2153,7 +2634,7 @@ mod tests {
         assert_eq!(command.args[0], "-e");
         assert!(command.args.contains(&"ssh-copy-id".to_string()));
         assert!(command.args.contains(&public_key_path));
-        assert_eq!(diagnostics.backend_result, "spawned");
+        assert_eq!(diagnostics.backend_result, "preflightPassed");
         assert_eq!(diagnostics.action_type, "install-public-key");
         assert_eq!(
             diagnostics.selected_terminal_or_client,
@@ -2184,7 +2665,7 @@ mod tests {
         );
 
         assert!(command.is_none());
-        assert_eq!(diagnostics.backend_result, "preflightFailed");
+        assert_eq!(diagnostics.backend_result, "notFound");
         assert!(diagnostics.message.contains("No supported terminal found"));
         assert!(diagnostics.command_preview.starts_with("sftp -P 2222"));
         assert!(diagnostics
@@ -2248,12 +2729,13 @@ mod tests {
         let command = command.unwrap();
 
         assert_eq!(command.program, "konsole");
-        assert_eq!(command.args[0], "--noclose");
-        assert_eq!(command.args[1], "-e");
+        assert_eq!(command.args[0], "--separate");
+        assert_eq!(command.args[1], "--noclose");
+        assert_eq!(command.args[2], "-e");
         assert!(command.args.contains(&"xfreerdp".to_string()));
         assert!(command.args.contains(&"/v:nas.local:3390".to_string()));
         assert!(command.args.contains(&"/cert:tofu".to_string()));
-        assert_eq!(diagnostics.backend_result, "spawned");
+        assert_eq!(diagnostics.backend_result, "preflightPassed");
         assert_eq!(
             diagnostics.selected_terminal_or_client,
             Some("konsole -> xfreerdp".to_string())
@@ -2312,7 +2794,7 @@ mod tests {
         );
 
         assert!(command.is_none());
-        assert_eq!(diagnostics.backend_result, "preflightFailed");
+        assert_eq!(diagnostics.backend_result, "notFound");
         assert!(diagnostics.message.contains("No supported terminal found"));
         assert!(diagnostics.command_preview.starts_with("xfreerdp "));
         assert!(diagnostics
@@ -2353,11 +2835,253 @@ mod tests {
         .unwrap();
 
         assert_eq!(command.program, "konsole");
-        assert_eq!(command.args[0], "--noclose");
-        assert_eq!(command.args[1], "-e");
+        assert_eq!(command.args[0], "--separate");
+        assert_eq!(command.args[1], "--noclose");
+        assert_eq!(command.args[2], "-e");
         assert!(command.args.contains(&"ssh".to_string()));
         assert!(command
             .args
             .contains(&key_path.to_string_lossy().into_owned()));
+    }
+
+    #[test]
+    fn terminal_availability_reports_absolute_executable_paths() {
+        let availability = terminal_availability_with(|terminal| {
+            (terminal == "konsole").then(|| PathBuf::from("/usr/bin/konsole"))
+        });
+
+        let konsole = availability
+            .iter()
+            .find(|terminal| terminal.preference == "konsole")
+            .unwrap();
+        assert!(konsole.available);
+        assert_eq!(konsole.executable.as_deref(), Some("/usr/bin/konsole"));
+        assert!(
+            !availability
+                .iter()
+                .find(|terminal| terminal.preference == "alacritty")
+                .unwrap()
+                .available
+        );
+    }
+
+    #[test]
+    fn non_appimage_environment_is_preserved() {
+        let environment = host_launch_environment_from([
+            (OsString::from("PATH"), OsString::from("/usr/bin:/bin")),
+            (OsString::from("DISPLAY"), OsString::from(":1")),
+            (
+                OsString::from("DBUS_SESSION_BUS_ADDRESS"),
+                OsString::from("unix:path=/run/user/1000/bus"),
+            ),
+        ]);
+
+        assert!(!environment.sanitized);
+        assert_eq!(
+            environment.variables.get(OsStr::new("DISPLAY")),
+            Some(&OsString::from(":1"))
+        );
+        assert_eq!(environment.variables.len(), 3);
+    }
+
+    #[test]
+    fn appimage_environment_restores_host_paths_and_filters_both_preload_delimiters() {
+        let appdir = "/tmp/.mount_SSHBud123";
+        for preload in [
+            format!("/usr/lib/libhost-first.so:{appdir}/usr/lib/libappimage.so:/opt/lib/libhost-last.so"),
+            format!("{appdir}/usr/lib/libappimage.so:/usr/lib/libhost-first.so:/opt/lib/libhost-last.so"),
+            format!("/usr/lib/libhost-first.so {appdir}/usr/lib/libappimage.so /opt/lib/libhost-last.so"),
+            format!("{appdir}/usr/lib/libappimage.so /usr/lib/libhost-first.so /opt/lib/libhost-last.so"),
+        ] {
+            let environment = host_launch_environment_from([
+                (OsString::from("APPIMAGE"), OsString::from("/opt/SSH-Buddy.AppImage")),
+                (OsString::from("APPDIR"), OsString::from(appdir)),
+                (
+                    OsString::from("PATH"),
+                    OsString::from(format!("{appdir}/usr/bin:/appimage/fallback")),
+                ),
+                (
+                    OsString::from("PATH_ORIG"),
+                    OsString::from("/usr/local/bin:/usr/bin:/bin"),
+                ),
+                (
+                    OsString::from("LD_LIBRARY_PATH"),
+                    OsString::from(format!("{appdir}/usr/lib:/appimage/fallback")),
+                ),
+                (
+                    OsString::from("LD_LIBRARY_PATH_ORIG"),
+                    OsString::from("/usr/local/lib:/usr/lib"),
+                ),
+                (OsString::from("LD_PRELOAD"), OsString::from(preload)),
+                (
+                    OsString::from("QT_PLUGIN_PATH"),
+                    OsString::from(format!("{appdir}/usr/lib/qt6/plugins")),
+                ),
+                (OsString::from("WAYLAND_DISPLAY"), OsString::from("wayland-0")),
+                (OsString::from("DISPLAY"), OsString::from(":0")),
+                (
+                    OsString::from("DBUS_SESSION_BUS_ADDRESS"),
+                    OsString::from("unix:path=/run/user/1000/bus"),
+                ),
+                (
+                    OsString::from("SSH_AUTH_SOCK"),
+                    OsString::from("/run/user/1000/ssh-agent.socket"),
+                ),
+                (OsString::from("LANG"), OsString::from("en_US.UTF-8")),
+                (OsString::from("LC_ALL"), OsString::from("en_US.UTF-8")),
+            ]);
+
+            assert!(environment.sanitized);
+            assert_eq!(
+                environment.variables.get(OsStr::new("PATH")),
+                Some(&OsString::from("/usr/local/bin:/usr/bin:/bin"))
+            );
+            assert_eq!(
+                environment.variables.get(OsStr::new("LD_LIBRARY_PATH")),
+                Some(&OsString::from("/usr/local/lib:/usr/lib"))
+            );
+            assert_eq!(
+                environment.variables.get(OsStr::new("LD_PRELOAD")),
+                Some(&OsString::from(
+                    "/usr/lib/libhost-first.so:/opt/lib/libhost-last.so"
+                ))
+            );
+            assert_eq!(
+                command_path_in_with(
+                    "konsole",
+                    environment.variables.get(OsStr::new("PATH")),
+                    |path| path == Path::new("/usr/bin/konsole"),
+                ),
+                Some(PathBuf::from("/usr/bin/konsole"))
+            );
+            for name in [
+                "WAYLAND_DISPLAY",
+                "DISPLAY",
+                "DBUS_SESSION_BUS_ADDRESS",
+                "SSH_AUTH_SOCK",
+                "LANG",
+                "LC_ALL",
+            ] {
+                assert!(environment.variables.contains_key(OsStr::new(name)));
+            }
+            for value in environment.variables.values() {
+                assert!(!value.to_string_lossy().contains(".mount_"));
+            }
+            for name in [
+                "APPDIR",
+                "APPIMAGE",
+                "PATH_ORIG",
+                "LD_LIBRARY_PATH_ORIG",
+                "QT_PLUGIN_PATH",
+            ] {
+                assert!(!environment.variables.contains_key(OsStr::new(name)));
+            }
+        }
+    }
+
+    #[test]
+    fn classifies_fake_immediate_nonzero_exit_with_bounded_stderr() {
+        let mut settings = sample_settings();
+        settings.terminal_preference = "konsole".to_string();
+        let (diagnostics, _) = build_terminal_test_diagnostics(&settings, |candidate| {
+            candidate == "printf" || candidate == "konsole"
+        });
+        let command = ProcessCommand {
+            program: env::current_exe().unwrap().to_string_lossy().into_owned(),
+            args: Vec::new(),
+        };
+        let environment = HostLaunchEnvironment {
+            variables: BTreeMap::new(),
+            sanitized: true,
+        };
+        let runner = FakeProcessRunner {
+            observation: ProcessObservation::Exited {
+                code: Some(23),
+                stderr: format!("loader failure\u{7} {}", "x".repeat(3_000)),
+            },
+        };
+
+        let diagnostics =
+            spawn_with_diagnostics_using(diagnostics, Some(command), &runner, &environment);
+
+        assert_eq!(diagnostics.backend_result, "exitedImmediately");
+        assert_eq!(diagnostics.exit_code, Some(23));
+        assert!(diagnostics
+            .stderr
+            .as_deref()
+            .unwrap()
+            .starts_with("loader failure"));
+        assert!(diagnostics.stderr.as_deref().unwrap().len() <= STDERR_LIMIT_BYTES);
+        assert!(!diagnostics.stderr.as_deref().unwrap().contains('\u{7}'));
+        assert!(diagnostics.environment_sanitized);
+    }
+
+    #[test]
+    fn classifies_running_and_cleanly_detached_fake_processes_as_started() {
+        for observation in [
+            ProcessObservation::Running,
+            ProcessObservation::Exited {
+                code: Some(0),
+                stderr: String::new(),
+            },
+        ] {
+            let (diagnostics, _) =
+                build_terminal_test_diagnostics(&sample_settings(), |candidate| {
+                    candidate == "printf" || candidate == "konsole"
+                });
+            let command = ProcessCommand {
+                program: env::current_exe().unwrap().to_string_lossy().into_owned(),
+                args: Vec::new(),
+            };
+            let environment = HostLaunchEnvironment {
+                variables: BTreeMap::new(),
+                sanitized: false,
+            };
+            let runner = FakeProcessRunner { observation };
+
+            let diagnostics =
+                spawn_with_diagnostics_using(diagnostics, Some(command), &runner, &environment);
+
+            assert_eq!(diagnostics.backend_result, "started");
+        }
+    }
+
+    #[test]
+    fn classifies_missing_and_spawn_failed_launches() {
+        let (diagnostics, _) = build_terminal_test_diagnostics(&sample_settings(), |candidate| {
+            candidate == "printf" || candidate == "konsole"
+        });
+        let missing = spawn_with_diagnostics_using(
+            diagnostics.clone(),
+            Some(ProcessCommand {
+                program: "ssh-buddy-terminal-that-does-not-exist".to_string(),
+                args: Vec::new(),
+            }),
+            &FakeProcessRunner {
+                observation: ProcessObservation::Running,
+            },
+            &HostLaunchEnvironment {
+                variables: BTreeMap::new(),
+                sanitized: false,
+            },
+        );
+        assert_eq!(missing.backend_result, "notFound");
+
+        let failed = spawn_with_diagnostics_using(
+            diagnostics,
+            Some(ProcessCommand {
+                program: env::current_exe().unwrap().to_string_lossy().into_owned(),
+                args: Vec::new(),
+            }),
+            &FakeProcessRunner {
+                observation: ProcessObservation::SpawnFailed("permission denied".to_string()),
+            },
+            &HostLaunchEnvironment {
+                variables: BTreeMap::new(),
+                sanitized: false,
+            },
+        );
+        assert_eq!(failed.backend_result, "spawnFailed");
+        assert!(failed.message.contains("permission denied"));
     }
 }

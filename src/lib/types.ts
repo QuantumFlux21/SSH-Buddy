@@ -83,6 +83,15 @@ export interface ServerProfile {
 export interface AppSettings {
   terminalPreference: string;
   safetyWarningsEnabled: boolean;
+  startMinimized: boolean;
+  closeToTray: boolean;
+}
+
+export interface DesktopBehaviorStatus {
+  autostartEnabled: boolean | null;
+  autostartError: string | null;
+  trayAvailable: boolean;
+  trayError: string | null;
 }
 
 export interface AppStateSnapshot {
@@ -171,6 +180,14 @@ export interface ImportResult {
 export interface LaunchBinaryStatus {
   name: string;
   exists: boolean;
+  executable: string | null;
+}
+
+export interface TerminalAvailability {
+  preference: string;
+  label: string;
+  available: boolean;
+  executable: string | null;
 }
 
 export interface LaunchDiagnostics {
@@ -184,8 +201,11 @@ export interface LaunchDiagnostics {
   publicKeyPath: string | null;
   publicKeyFileExists: boolean | null;
   requiredBinaries: LaunchBinaryStatus[];
-  backendResult: "spawned" | "preflightFailed" | "spawnFailed" | string;
+  backendResult: "started" | "notFound" | "preflightFailed" | "spawnFailed" | "exitedImmediately" | string;
   message: string;
+  exitCode: number | null;
+  stderr: string | null;
+  environmentSanitized: boolean;
   freeRdpExecutable: string | null;
   launchedViaTerminal: boolean | null;
   certificateMode: RdpCertificateMode | string | null;
