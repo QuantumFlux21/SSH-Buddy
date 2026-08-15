@@ -53,6 +53,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "009_rdp_scaling_options",
         include_str!("../migrations/009_rdp_scaling_options.sql"),
     ),
+    (
+        "010_desktop_behavior_settings",
+        include_str!("../migrations/010_desktop_behavior_settings.sql"),
+    ),
 ];
 
 #[derive(Debug)]
@@ -522,7 +526,7 @@ impl Database {
         let settings = conn
             .query_row(
                 "
-                SELECT terminal_preference, safety_warnings_enabled
+                SELECT terminal_preference, safety_warnings_enabled, start_minimized, close_to_tray
                 FROM app_settings
                 WHERE id = 1
                 ",
@@ -531,6 +535,8 @@ impl Database {
                     Ok(AppSettings {
                         terminal_preference: row.get(0)?,
                         safety_warnings_enabled: row.get::<_, i64>(1)? == 1,
+                        start_minimized: row.get::<_, i64>(2)? == 1,
+                        close_to_tray: row.get::<_, i64>(3)? == 1,
                     })
                 },
             )
@@ -549,12 +555,16 @@ impl Database {
                 "
                 UPDATE app_settings
                 SET terminal_preference = ?1,
-                    safety_warnings_enabled = ?2
+                    safety_warnings_enabled = ?2,
+                    start_minimized = ?3,
+                    close_to_tray = ?4
                 WHERE id = 1
                 ",
                 params![
                     &input.terminal_preference,
-                    bool_to_i64(input.safety_warnings_enabled)
+                    bool_to_i64(input.safety_warnings_enabled),
+                    bool_to_i64(input.start_minimized),
+                    bool_to_i64(input.close_to_tray)
                 ],
             )
             .map_err(to_error)?;
@@ -562,12 +572,16 @@ impl Database {
         if updated == 0 {
             conn.execute(
                 "
-                INSERT INTO app_settings (id, terminal_preference, safety_warnings_enabled)
-                VALUES (1, ?1, ?2)
+                INSERT INTO app_settings (
+                    id, terminal_preference, safety_warnings_enabled, start_minimized, close_to_tray
+                )
+                VALUES (1, ?1, ?2, ?3, ?4)
                 ",
                 params![
                     &input.terminal_preference,
-                    bool_to_i64(input.safety_warnings_enabled)
+                    bool_to_i64(input.safety_warnings_enabled),
+                    bool_to_i64(input.start_minimized),
+                    bool_to_i64(input.close_to_tray)
                 ],
             )
             .map_err(to_error)?;
@@ -1381,6 +1395,12 @@ mod tests {
         assert!(db
             .column_exists("server_rdp_settings", "scaling_percent")
             .unwrap());
+        assert!(db.column_exists("app_settings", "start_minimized").unwrap());
+        assert!(db.column_exists("app_settings", "close_to_tray").unwrap());
+
+        let settings = db.get_settings().unwrap();
+        assert!(!settings.start_minimized);
+        assert!(!settings.close_to_tray);
     }
 
     #[test]
@@ -1417,6 +1437,8 @@ mod tests {
         let settings = db.get_settings().unwrap();
         assert_eq!(settings.terminal_preference, "konsole");
         assert!(settings.safety_warnings_enabled);
+        assert!(!settings.start_minimized);
+        assert!(!settings.close_to_tray);
         let links = db.list_web_links("srv_fixture").unwrap();
         assert_eq!(links.len(), 1);
         assert_eq!(links[0].id, "web_fixture");
@@ -1429,32 +1451,18 @@ mod tests {
     }
 
     #[test]
-    fn pending_file_migration_creates_recoverable_snapshot_first() {
+    fn v0_6_0_fixture_backup_preserves_the_original_schema_and_data() {
         let dir = tempdir().unwrap();
         let database_path = dir.path().join("ssh-buddy.sqlite3");
-        let mut fixture = Connection::open(&database_path).unwrap();
+        let fixture = Connection::open(&database_path).unwrap();
         fixture
-            .execute_batch(
-                "CREATE TABLE schema_migrations (version TEXT PRIMARY KEY, applied_at TEXT NOT NULL);",
-            )
+            .execute_batch(include_str!("../test-fixtures/v0.6.0.sql"))
             .unwrap();
-        for &(version, sql) in &MIGRATIONS[..8] {
-            let tx = fixture.transaction().unwrap();
-            tx.execute_batch(sql).unwrap();
-            tx.execute(
-                "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, ?2)",
-                params![version, "2026-07-01T00:00:00.000Z"],
-            )
-            .unwrap();
-            tx.commit().unwrap();
-        }
         drop(fixture);
 
         let db = Database::open(&database_path).unwrap();
         db.migrate().unwrap();
-        assert!(db
-            .column_exists("server_rdp_settings", "scaling_mode")
-            .unwrap());
+        assert!(db.column_exists("app_settings", "start_minimized").unwrap());
 
         let backup_path = fs::read_dir(dir.path())
             .unwrap()
@@ -1468,35 +1476,85 @@ mod tests {
             .expect("a pre-migration backup should be created");
         let backup = Connection::open(backup_path).unwrap();
         verify_database_integrity(&backup, "in pre-migration backup").unwrap();
-        let applied_migrations = backup
-            .query_row("SELECT COUNT(*) FROM schema_migrations", [], |row| {
-                row.get::<_, i64>(0)
-            })
-            .unwrap();
-        assert_eq!(applied_migrations, 8);
-        let scaling_column_count = backup
+
+        let migration_010_count: i64 = backup
             .query_row(
-                "SELECT COUNT(*) FROM pragma_table_info('server_rdp_settings') WHERE name = 'scaling_mode'",
+                "SELECT COUNT(*) FROM schema_migrations WHERE version = '010_desktop_behavior_settings'",
                 [],
-                |row| row.get::<_, i64>(0),
+                |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(scaling_column_count, 0);
+        assert_eq!(migration_010_count, 0);
+        for column in ["start_minimized", "close_to_tray"] {
+            let count: i64 = backup
+                .query_row(
+                    "SELECT COUNT(*) FROM pragma_table_info('app_settings') WHERE name = ?1",
+                    params![column],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(count, 0, "{column} must not exist in the pre-010 backup");
+        }
+
+        for (table, expected_id) in [
+            ("groups", "grp_fixture"),
+            ("ssh_key_refs", "key_fixture"),
+            ("server_profiles", "srv_fixture"),
+            ("tags", "tag_fixture"),
+            ("server_web_links", "web_fixture"),
+            ("server_tunnels", "tun_fixture"),
+        ] {
+            let id: String = backup
+                .query_row(&format!("SELECT id FROM {table} LIMIT 1"), [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert_eq!(id, expected_id);
+        }
+        let tag_link_count: i64 = backup
+            .query_row("SELECT COUNT(*) FROM server_profile_tags", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(tag_link_count, 1);
+        let rdp_server_id: String = backup
+            .query_row(
+                "SELECT server_profile_id FROM server_rdp_settings",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(rdp_server_id, "srv_fixture");
+        let terminal_preference: String = backup
+            .query_row(
+                "SELECT terminal_preference FROM app_settings WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(terminal_preference, "konsole");
     }
 
     #[test]
     fn settings_round_trip_and_reject_invalid_terminal() {
         let db = test_db();
-        assert_eq!(db.get_settings().unwrap().terminal_preference, "auto");
+        let defaults = db.get_settings().unwrap();
+        assert_eq!(defaults.terminal_preference, "auto");
+        assert!(!defaults.start_minimized);
+        assert!(!defaults.close_to_tray);
 
         let saved = db
             .save_settings(AppSettings {
                 terminal_preference: "konsole".to_string(),
                 safety_warnings_enabled: false,
+                start_minimized: true,
+                close_to_tray: true,
             })
             .unwrap();
         assert_eq!(saved.terminal_preference, "konsole");
         assert!(!saved.safety_warnings_enabled);
+        assert!(saved.start_minimized);
+        assert!(saved.close_to_tray);
 
         let loaded = db.get_settings().unwrap();
         assert_eq!(loaded, saved);
@@ -1505,6 +1563,8 @@ mod tests {
             db.save_settings(AppSettings {
                 terminal_preference: "powershell".to_string(),
                 safety_warnings_enabled: true,
+                start_minimized: false,
+                close_to_tray: false,
             })
             .unwrap_err(),
             "Unsupported terminal preference"

@@ -145,6 +145,8 @@ pub struct ServerProfile {
 pub struct AppSettings {
     pub terminal_preference: String,
     pub safety_warnings_enabled: bool,
+    pub start_minimized: bool,
+    pub close_to_tray: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -364,6 +366,8 @@ pub fn default_settings() -> AppSettings {
     AppSettings {
         terminal_preference: TERMINAL_PREFERENCE_AUTO.to_string(),
         safety_warnings_enabled: true,
+        start_minimized: false,
+        close_to_tray: false,
     }
 }
 

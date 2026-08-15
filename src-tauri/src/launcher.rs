@@ -1845,6 +1845,8 @@ mod tests {
         AppSettings {
             terminal_preference: TERMINAL_PREFERENCE_AUTO.to_string(),
             safety_warnings_enabled: true,
+            start_minimized: false,
+            close_to_tray: false,
         }
     }
 

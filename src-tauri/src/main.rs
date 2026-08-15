@@ -2,6 +2,7 @@
 
 mod commands;
 mod db;
+mod desktop;
 mod domain;
 mod launcher;
 mod ssh_config;
@@ -20,10 +21,19 @@ use commands::{
     save_settings, scan_server_ports, test_terminal, update_server, update_tunnel, update_web_link,
 };
 use db::Database;
+use desktop::{get_desktop_behavior_status, set_autostart_enabled, DesktopState};
+use domain::default_settings;
 use tauri::Manager;
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            desktop::handle_second_instance(app);
+        }))
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(
             tauri_plugin_opener::Builder::new()
@@ -38,12 +48,38 @@ fn main() {
                     format!("Could not resolve the application data directory: {error}")
                 })
                 .and_then(|app_data_dir| initialize_database(&app_data_dir));
-            let database = match database_result {
-                Ok(database) => database,
-                Err(error) => Database::unavailable(database_recovery_message(&error))
-                    .map_err(io::Error::other)?,
+            let (database, database_ready, settings) = match database_result {
+                Ok(database) => match database.get_settings() {
+                    Ok(settings) => (database, true, settings),
+                    Err(error) => (
+                        Database::unavailable(database_recovery_message(&format!(
+                            "Could not load application settings: {error}"
+                        )))
+                        .map_err(io::Error::other)?,
+                        false,
+                        default_settings(),
+                    ),
+                },
+                Err(error) => (
+                    Database::unavailable(database_recovery_message(&error))
+                        .map_err(io::Error::other)?,
+                    false,
+                    default_settings(),
+                ),
             };
             app.manage(database);
+            app.manage(DesktopState::new(settings.close_to_tray));
+            desktop::initialize(app.handle(), database_ready, &settings);
+
+            if let Some(window) = app.get_webview_window("main") {
+                let app_handle = app.handle().clone();
+                let close_window = window.clone();
+                window.on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        desktop::handle_close_request(&app_handle, &close_window, api);
+                    }
+                });
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -59,6 +95,8 @@ fn main() {
             create_ssh_key_ref,
             delete_ssh_key_ref,
             save_settings,
+            get_desktop_behavior_status,
+            set_autostart_enabled,
             get_terminal_availability,
             test_terminal,
             get_ssh_command,

@@ -1,4 +1,4 @@
-use tauri::State;
+use tauri::{AppHandle, State};
 use tauri_plugin_opener::OpenerExt;
 
 use crate::{
@@ -84,8 +84,12 @@ pub fn delete_ssh_key_ref(id: String, db: State<'_, Database>) -> AppResult<()> 
 }
 
 #[tauri::command]
-pub fn save_settings(input: AppSettings, db: State<'_, Database>) -> AppResult<AppSettings> {
-    db.save_settings(input)
+pub fn save_settings(
+    input: AppSettings,
+    app: AppHandle,
+    db: State<'_, Database>,
+) -> AppResult<AppSettings> {
+    crate::desktop::save_settings(&app, db.inner(), input)
 }
 
 #[tauri::command]
@@ -93,6 +97,8 @@ pub fn test_terminal(terminal_preference: String) -> AppResult<LaunchDiagnostics
     let settings = AppSettings {
         terminal_preference,
         safety_warnings_enabled: true,
+        start_minimized: false,
+        close_to_tray: false,
     };
     crate::domain::validate_app_settings(&settings)?;
     launch_terminal_test(&settings)
