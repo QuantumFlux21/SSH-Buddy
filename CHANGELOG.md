@@ -4,6 +4,8 @@ All notable changes to SSH-Buddy will be documented in this file.
 
 ## Unreleased
 
+## 0.7.0 - 2026-08-15
+
 ### Added
 
 - Added backend-owned desktop behavior controls for verified OS login startup, next-launch minimized startup, and close-to-tray behavior with an Open/Quit context menu.
