@@ -6,15 +6,15 @@ use crate::{
     domain::{
         AppResult, AppSettings, AppStateSnapshot, Group, GroupInput, ImportCandidate, ImportResult,
         LaunchDiagnostics, PortScanReport, RdpSettings, RdpSettingsInput, ServerInput,
-        ServerProfile, ServerStatus, SshKeyInput, SshKeyRef, Tunnel, TunnelInput, WebLink,
-        WebLinkInput,
+        ServerProfile, ServerStatus, SshKeyInput, SshKeyRef, TerminalAvailability, Tunnel,
+        TunnelInput, WebLink, WebLinkInput,
     },
     launcher::{
         build_install_public_key_argv, build_rdp_launch_command, build_sftp_argv, build_ssh_argv,
         build_tunnel_argv, format_argv_for_display, launch_install_public_key_in_terminal,
         launch_rdp as launch_rdp_client, launch_sftp_in_terminal, launch_ssh_in_terminal,
         launch_tunnel_in_terminal, test_terminal as launch_terminal_test,
-        validate_public_key_file_path,
+        terminal_availability, validate_public_key_file_path,
     },
 };
 
@@ -89,9 +89,18 @@ pub fn save_settings(input: AppSettings, db: State<'_, Database>) -> AppResult<A
 }
 
 #[tauri::command]
-pub fn test_terminal(db: State<'_, Database>) -> AppResult<LaunchDiagnostics> {
-    let settings = db.get_settings()?;
+pub fn test_terminal(terminal_preference: String) -> AppResult<LaunchDiagnostics> {
+    let settings = AppSettings {
+        terminal_preference,
+        safety_warnings_enabled: true,
+    };
+    crate::domain::validate_app_settings(&settings)?;
     launch_terminal_test(&settings)
+}
+
+#[tauri::command]
+pub fn get_terminal_availability() -> Vec<TerminalAvailability> {
+    terminal_availability()
 }
 
 #[tauri::command]

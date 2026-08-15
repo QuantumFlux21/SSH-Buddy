@@ -253,6 +253,16 @@ pub struct ImportResult {
 pub struct LaunchBinaryStatus {
     pub name: String,
     pub exists: bool,
+    pub executable: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalAvailability {
+    pub preference: String,
+    pub label: String,
+    pub available: bool,
+    pub executable: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -270,6 +280,9 @@ pub struct LaunchDiagnostics {
     pub required_binaries: Vec<LaunchBinaryStatus>,
     pub backend_result: String,
     pub message: String,
+    pub exit_code: Option<i32>,
+    pub stderr: Option<String>,
+    pub environment_sanitized: bool,
     pub free_rdp_executable: Option<String>,
     pub launched_via_terminal: Option<bool>,
     pub certificate_mode: Option<String>,
