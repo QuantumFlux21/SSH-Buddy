@@ -18,6 +18,7 @@ SSH-Buddy is split into a React frontend and a Rust backend through Tauri comman
 - Builds argv arrays for SSH, SFTP, `ssh-copy-id`, FreeRDP, tunnel, terminal-test, and ping processes instead of interpolating shell commands.
 - Restores host environment variables for external processes launched from an AppImage.
 - Returns launch diagnostics that distinguish missing tools, validation failures, spawn failures, immediate exits, and started terminal processes; it does not claim that a remote connection succeeded.
+- Owns startup window state, tray creation and fallback, close interception, explicit quit, single-instance restoration, and verified OS autostart operations in `desktop.rs`.
 
 ## Data Model
 
@@ -28,9 +29,19 @@ SSH-Buddy is split into a React frontend and a Rust backend through Tauri comman
 - `Tunnel`: a saved local (`-L`) forwarding profile associated with a server.
 - `RdpSettings`: password-free, allowlisted FreeRDP launch settings associated with a server.
 - `WebLink`: named web admin URL attached to a server.
-- `AppSettings`: terminal and safety preferences.
+- `AppSettings`: terminal and safety preferences plus the SQLite-owned `startMinimized` and `closeToTray` preferences.
 
 Groups, tags, SSH key references, tunnels, RDP settings, web links, and app settings are stored in the app-owned SQLite database through versioned migrations. Reachability results, port-scan results, and launch diagnostics are transient and are not stored as monitoring history.
+
+Autostart is OS-owned state, not `AppSettings` and not SQLite data. The Rust autostart adapter queries the OS registration after every enable or disable attempt and returns an unknown state with an actionable error when verification is unavailable.
+
+## Desktop Lifecycle
+
+- The configured main window starts hidden and unfocused. Rust chooses normal, minimized-taskbar, or recovery presentation only after migration and initial settings loading.
+- A live tray is required before close-to-tray may intercept the main window's close request. Tray or hide failures fall back to normal exit.
+- Enabling close-to-tray creates the tray before persistence and removes a newly created tray if persistence fails. Disabling persists first and removes the tray immediately.
+- The mandatory tray context menu owns Open and explicit Quit; Linux tray-click events are not required.
+- The single-instance plugin is registered first and restores, shows, and focuses the existing window on a second launch.
 
 ## Connection and Utility Boundaries
 
@@ -46,6 +57,6 @@ Future connection actions must preserve these backend-owned execution and creden
 
 ## Tests
 
-- Frontend Vitest tests cover form helpers, filtering, clipboard behavior, import summaries, tunnels, RDP settings, and web links.
-- Rust unit tests cover validation, persistence, integrity/migration backups, the v0.6.0 fixture, SSH config import, command/argv generation, launch outcomes, AppImage restoration, terminal selection/availability, and selected-server status checks.
-- CI builds and tests both layers and runs `cargo check` for the Tauri backend.
+- Frontend Vitest tests cover form helpers, filtering, clipboard behavior, import summaries, tunnels, RDP settings, web links, and immediate desktop-setting behavior with verified post-state handling.
+- Rust unit tests cover validation, persistence, integrity/migration backups, the v0.6.0 fixture, SSH config import, command/argv generation, launch outcomes, AppImage restoration, terminal selection/availability, selected-server status checks, and fake-backed desktop lifecycle/autostart decisions.
+- CI builds and tests both layers and runs locked `cargo check` jobs on Ubuntu, Windows, and macOS.

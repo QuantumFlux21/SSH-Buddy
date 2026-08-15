@@ -155,6 +155,18 @@ Status: complete for v0.6.0.
 - Limit manual port scans to the selected host and a fixed common-port allowlist.
 - Keep subnet discovery, arbitrary port ranges, background scanning, and monitoring history out of scope.
 
+## Desktop Behavior
+
+Status: implemented for v0.7.0; release acceptance remains outstanding.
+
+- Persist start-minimized and close-to-tray preferences in migration 010 with defaults off.
+- Keep login startup OS-owned and report the verified state after every change attempt.
+- Delay initial window presentation until database migration and settings loading finish.
+- Provide normal, minimized-taskbar, and recovery startup behavior with safe window-operation fallbacks.
+- Require a live tray and mandatory Open/Quit context menu before intercepting close.
+- Restore hidden or minimized windows after a second process launch.
+- Keep automated autostart tests fake-backed so runner login configuration is never modified.
+
 ## Security Hardening
 
 Status: complete for v0.3.0; release hardening continues.
@@ -221,7 +233,9 @@ Status: in progress; includes the folded unreleased candidate and requires the v
 - Verify SSH destination rejection at persistence, import, and every OpenSSH launch path.
 - Verify host terminal discovery, visible-selection testing, AppImage environment restoration, Konsole invocation, and every final launch outcome.
 - Verify CSP, clipboard, and backend URL-opening boundaries.
-- Keep Linux/KDE/AppImage, Windows, and macOS artifact checks outstanding when those environments are unavailable; do not treat them as completed automatically.
+- Verify migration 010 defaults/round trips, fixture upgrade and pre-010 backup, startup modes, tray fallbacks, explicit Quit, second-instance restoration, and fake-backed autostart outcomes.
+- Require locked cargo checks on Ubuntu, Windows, and macOS; Windows and macOS remain unsigned and experimental.
+- Require the generated AppImage to pass the full CachyOS/KDE Wayland acceptance gate before publishing the existing draft prerelease. Keep it draft when the required host or any mandatory result is unavailable.
 
 ## Post-MVP
 

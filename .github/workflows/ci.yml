@@ -36,8 +36,30 @@ jobs:
       - name: Check Rust formatting
         run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
 
-      - name: Check Rust backend
-        run: cargo check --locked --manifest-path src-tauri/Cargo.toml
-
       - name: Test Rust backend
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+
+  cargo-check:
+    name: Cargo check (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ubuntu-22.04
+          - platform: windows-latest
+          - platform: macos-latest
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux Tauri dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
+
+      - name: Check Rust backend
+        run: cargo check --locked --manifest-path src-tauri/Cargo.toml

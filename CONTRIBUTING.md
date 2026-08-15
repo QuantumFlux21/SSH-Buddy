@@ -40,3 +40,7 @@ Keep FTP/FTPS, VNC, SCP helpers, embedded SFTP/RDP or terminal experiences, remo
 ## Security-sensitive Changes
 
 Changes involving process execution, SSH config import, key handling, external URLs, terminals, or privileged workflows need tests and a short security note in the pull request.
+
+Desktop lifecycle changes also require pure fake-based tests. Automated tests must not modify the runner's real login startup registration. Keep window, tray, autostart, and single-instance operations backend-owned; do not add frontend tray/autostart capabilities.
+
+Before release, require the local checks above plus locked `cargo check` jobs on Ubuntu, Windows, and macOS. Linux-only Tauri development packages belong only in the Ubuntu jobs. The generated AppImage must pass the documented CachyOS/KDE Wayland acceptance gate before the existing draft prerelease is published.

@@ -6,12 +6,17 @@ All notable changes to SSH-Buddy will be documented in this file.
 
 ### Added
 
+- Added backend-owned desktop behavior controls for verified OS login startup, next-launch minimized startup, and close-to-tray behavior with an Open/Quit context menu.
+- Added single-instance restoration so a second launch restores, shows, and focuses the existing main window.
+- Added migration 010 for `startMinimized` and `closeToTray`, with defaults off and fixture-backed pre-migration backup coverage.
 - Added terminal availability reporting with resolved host executable paths and a settings action that tests the terminal selection currently visible, even before it is saved.
 - Added bounded immediate-exit diagnostics with exit codes and sanitized stderr for external terminal launches.
 - Added a v0.6.0 database fixture and regression coverage for preserving saved profiles, groups, tags, key references, web links, tunnels, RDP settings, and application settings.
 
 ### Changed
 
+- The main window now remains hidden until database migration and initial settings loading finish, then opens normally, starts as a minimized taskbar window when requested, or shows recovery normally after a database failure.
+- Desktop checkboxes persist independently from unsaved connection preferences. Autostart reports verified OS state, and close-to-tray becomes effective only when a live tray is available.
 - Reworked the selected-server detail page into clearer overview, connection action, notes, tunnel, RDP, web link, status, and diagnostics areas.
 - Grouped SSH, SFTP, and public key install actions into separate action cards instead of one large button row.
 - Made launch diagnostics more compact with the command preview visible and deeper details behind a disclosure.
@@ -21,6 +26,8 @@ All notable changes to SSH-Buddy will be documented in this file.
 
 ### Fixed
 
+- Close-to-tray now falls back to normal process exit when tray creation or window hiding fails, avoiding an invisible process without a usable tray.
+- Close-to-tray enablement creates the tray before persistence and rolls it back after a persistence failure; disabling persists first and removes the tray immediately.
 - Database startup now checks integrity before and after migrations and creates a recoverable, uniquely named pre-migration backup before modifying an existing file with pending migrations.
 - Database open, integrity, backup, and migration failures now leave database access disabled for the session and explicitly state that existing data was not deleted.
 - SSH config entries with unsafe aliases or resolved destinations are rejected before `ssh -G` resolution or key-reference/server persistence.
