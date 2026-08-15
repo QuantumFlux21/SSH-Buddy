@@ -4,12 +4,33 @@ All notable changes to SSH-Buddy will be documented in this file.
 
 ## Unreleased
 
+### Added
+
+- Added terminal availability reporting with resolved host executable paths and a settings action that tests the terminal selection currently visible, even before it is saved.
+- Added bounded immediate-exit diagnostics with exit codes and sanitized stderr for external terminal launches.
+- Added a v0.6.0 database fixture and regression coverage for preserving saved profiles, groups, tags, key references, web links, tunnels, RDP settings, and application settings.
+
 ### Changed
 
 - Reworked the selected-server detail page into clearer overview, connection action, notes, tunnel, RDP, web link, status, and diagnostics areas.
 - Grouped SSH, SFTP, and public key install actions into separate action cards instead of one large button row.
 - Made launch diagnostics more compact with the command preview visible and deeper details behind a disclosure.
 - Improved responsive layout so the right-side panel and row actions stack more cleanly on narrower windows.
+- Launch results now distinguish `started`, `notFound`, `preflightFailed`, `spawnFailed`, and `exitedImmediately` without treating a terminal start as proof of a remote connection.
+- Konsole launches use a separate process with `--separate --noclose -e`, and AppImage launches restore the host environment before resolving or starting external tools.
+
+### Fixed
+
+- Database startup now checks integrity before and after migrations and creates a recoverable, uniquely named pre-migration backup before modifying an existing file with pending migrations.
+- Database open, integrity, backup, and migration failures now leave database access disabled for the session and explicitly state that existing data was not deleted.
+- SSH config entries with unsafe aliases or resolved destinations are rejected before `ssh -G` resolution or key-reference/server persistence.
+
+### Security
+
+- Hardened SSH destination validation across saved profiles, SSH config imports, and SSH, SFTP, public-key install, and tunnel launches.
+- Restricted production and development content security policies to local application content, required Tauri IPC, and the local development WebSocket only.
+- Kept clipboard capability write-only and web-link opening backend-owned with `http://`/`https://` validation and credential rejection.
+- Immediate-exit stderr is capped, stripped of unsafe control characters, and shown only as launch diagnostics.
 
 ## 0.6.0 - 2026-07-07
 

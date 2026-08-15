@@ -16,8 +16,8 @@ use crate::domain::{
     LaunchDiagnostics, RdpSettings, ServerProfile, TerminalAvailability, Tunnel, TunnelInput,
     RDP_CERTIFICATE_MODE_IGNORE, RDP_CERTIFICATE_MODE_PROMPT, RDP_CERTIFICATE_MODE_TOFU,
     RDP_SCALING_MODE_DYNAMIC_RESOLUTION, RDP_SCALING_MODE_NATIVE, RDP_SCALING_MODE_PERCENTAGE,
-    RDP_SCALING_MODE_SMART_SIZING, SUPPORTED_RDP_SCALING_PERCENTS,
-    SUPPORTED_TERMINAL_PREFERENCES, TERMINAL_PREFERENCE_AUTO,
+    RDP_SCALING_MODE_SMART_SIZING, SUPPORTED_RDP_SCALING_PERCENTS, SUPPORTED_TERMINAL_PREFERENCES,
+    TERMINAL_PREFERENCE_AUTO,
 };
 
 const TERMINAL_ORDER: &[&str] = &[
@@ -66,10 +66,7 @@ struct HostLaunchEnvironment {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ProcessObservation {
     Running,
-    Exited {
-        code: Option<i32>,
-        stderr: String,
-    },
+    Exited { code: Option<i32>, stderr: String },
     SpawnFailed(String),
 }
 
@@ -1060,9 +1057,7 @@ where
                     public_key_file_exists: key_details.public_key_file_exists,
                     required_binaries,
                     backend_result: "preflightPassed".to_string(),
-                    message: format!(
-                        "SSH-Buddy is ready to start {terminal} for {action_label}."
-                    ),
+                    message: format!("SSH-Buddy is ready to start {terminal} for {action_label}."),
                     exit_code: None,
                     stderr: None,
                     environment_sanitized: false,
@@ -1136,12 +1131,7 @@ fn spawn_with_diagnostics(
     command: Option<ProcessCommand>,
 ) -> LaunchDiagnostics {
     let environment = host_launch_environment();
-    spawn_with_diagnostics_using(
-        diagnostics,
-        command,
-        &SystemProcessRunner,
-        &environment,
-    )
+    spawn_with_diagnostics_using(diagnostics, command, &SystemProcessRunner, &environment)
 }
 
 fn spawn_with_diagnostics_using<R: ProcessRunner>(
@@ -1186,10 +1176,7 @@ fn spawn_with_diagnostics_using<R: ProcessRunner>(
     diagnostics
 }
 
-fn apply_process_observation(
-    diagnostics: &mut LaunchDiagnostics,
-    observation: ProcessObservation,
-) {
+fn apply_process_observation(diagnostics: &mut LaunchDiagnostics, observation: ProcessObservation) {
     let subject = diagnostics
         .selected_terminal_or_client
         .as_deref()
@@ -1295,9 +1282,10 @@ impl ProcessRunner for SystemProcessRunner {
 
 fn normalize_stderr(stderr: &str) -> Option<String> {
     let mut normalized = String::new();
-    for character in stderr.chars().filter(|character| {
-        !character.is_control() || matches!(character, '\n' | '\r' | '\t')
-    }) {
+    for character in stderr
+        .chars()
+        .filter(|character| !character.is_control() || matches!(character, '\n' | '\r' | '\t'))
+    {
         if normalized.len() + character.len_utf8() > STDERR_LIMIT_BYTES {
             break;
         }
@@ -1577,10 +1565,7 @@ fn executable_display(program: &str) -> String {
 pub fn terminal_availability() -> Vec<TerminalAvailability> {
     let environment = host_launch_environment();
     terminal_availability_with(|terminal| {
-        command_path_in(
-            terminal,
-            environment.variables.get(OsStr::new("PATH")),
-        )
+        command_path_in(terminal, environment.variables.get(OsStr::new("PATH")))
     })
 }
 
@@ -1956,7 +1941,10 @@ mod tests {
 
         server.host = "prod_web+blue".to_string();
         assert_eq!(
-            build_ssh_argv(&server, None).unwrap().last().map(String::as_str),
+            build_ssh_argv(&server, None)
+                .unwrap()
+                .last()
+                .map(String::as_str),
             Some("admin@prod_web+blue")
         );
     }
@@ -2866,11 +2854,13 @@ mod tests {
             .unwrap();
         assert!(konsole.available);
         assert_eq!(konsole.executable.as_deref(), Some("/usr/bin/konsole"));
-        assert!(!availability
-            .iter()
-            .find(|terminal| terminal.preference == "alacritty")
-            .unwrap()
-            .available);
+        assert!(
+            !availability
+                .iter()
+                .find(|terminal| terminal.preference == "alacritty")
+                .unwrap()
+                .available
+        );
     }
 
     #[test]
@@ -3014,7 +3004,11 @@ mod tests {
 
         assert_eq!(diagnostics.backend_result, "exitedImmediately");
         assert_eq!(diagnostics.exit_code, Some(23));
-        assert!(diagnostics.stderr.as_deref().unwrap().starts_with("loader failure"));
+        assert!(diagnostics
+            .stderr
+            .as_deref()
+            .unwrap()
+            .starts_with("loader failure"));
         assert!(diagnostics.stderr.as_deref().unwrap().len() <= STDERR_LIMIT_BYTES);
         assert!(!diagnostics.stderr.as_deref().unwrap().contains('\u{7}'));
         assert!(diagnostics.environment_sanitized);
@@ -3052,10 +3046,9 @@ mod tests {
 
     #[test]
     fn classifies_missing_and_spawn_failed_launches() {
-        let (diagnostics, _) =
-            build_terminal_test_diagnostics(&sample_settings(), |candidate| {
-                candidate == "printf" || candidate == "konsole"
-            });
+        let (diagnostics, _) = build_terminal_test_diagnostics(&sample_settings(), |candidate| {
+            candidate == "printf" || candidate == "konsole"
+        });
         let missing = spawn_with_diagnostics_using(
             diagnostics.clone(),
             Some(ProcessCommand {

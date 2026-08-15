@@ -921,7 +921,10 @@ mod tests {
             ("[2001:db8::10]", "admin"),
             ("fe80::1%eth0", "admin"),
         ] {
-            assert!(validate_ssh_destination(host, username).is_ok(), "{username}@{host}");
+            assert!(
+                validate_ssh_destination(host, username).is_ok(),
+                "{username}@{host}"
+            );
         }
 
         for (host, username, message) in [
@@ -948,7 +951,11 @@ mod tests {
                 "",
                 "Host must not contain '@'; set the username separately",
             ),
-            ("nas.local", "-oProxyCommand=touch", "Username must not start with '-'"),
+            (
+                "nas.local",
+                "-oProxyCommand=touch",
+                "Username must not start with '-'",
+            ),
             (
                 "nas.local",
                 "admin user",
@@ -961,7 +968,10 @@ mod tests {
             ),
             ("nas.local", "admin@ops", "Username must not contain '@'"),
         ] {
-            assert_eq!(validate_ssh_destination(host, username).unwrap_err(), message);
+            assert_eq!(
+                validate_ssh_destination(host, username).unwrap_err(),
+                message
+            );
         }
     }
 

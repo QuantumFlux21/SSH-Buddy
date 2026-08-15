@@ -1,0 +1,53 @@
+FROM node:24-bookworm-slim AS frontend
+
+WORKDIR /workspace
+
+RUN chown node:node /workspace
+
+COPY --chown=node:node package.json package-lock.json ./
+
+USER node
+
+RUN npm ci
+
+COPY --chown=node:node . .
+
+ENV CI=true
+
+
+FROM rust:bookworm AS rust
+
+RUN rustup component add rustfmt
+
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        curl \
+        file \
+        libayatana-appindicator3-dev \
+        librsvg2-dev \
+        libssl-dev \
+        libwebkit2gtk-4.1-dev \
+        openssh-client \
+        patchelf \
+        pkg-config \
+        wget \
+        xdg-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd --gid 10001 vmtest \
+    && useradd --uid 10001 --gid vmtest --create-home vmtest \
+    && install --directory --owner=vmtest --group=vmtest /workspace /home/vmtest/.cargo
+
+WORKDIR /workspace
+
+COPY --chown=vmtest:vmtest . .
+
+ENV CARGO_HOME=/home/vmtest/.cargo
+
+USER vmtest
+
+RUN cargo fetch --locked --manifest-path src-tauri/Cargo.toml
+
+ENV CARGO_NET_OFFLINE=true

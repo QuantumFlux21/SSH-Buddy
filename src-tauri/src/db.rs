@@ -1400,7 +1400,10 @@ mod tests {
         assert_eq!(servers.len(), 1);
         assert_eq!(servers[0].id, "srv_fixture");
         assert_eq!(servers[0].host, "nas.fixture.invalid");
-        assert_eq!(servers[0].proxy_jump.as_deref(), Some("jump.fixture.invalid"));
+        assert_eq!(
+            servers[0].proxy_jump.as_deref(),
+            Some("jump.fixture.invalid")
+        );
         assert_eq!(servers[0].group_id.as_deref(), Some("grp_fixture"));
         assert_eq!(servers[0].identity_file_id.as_deref(), Some("key_fixture"));
         assert_eq!(servers[0].tags[0].name, "fixture");

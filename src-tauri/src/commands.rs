@@ -13,8 +13,8 @@ use crate::{
         build_install_public_key_argv, build_rdp_launch_command, build_sftp_argv, build_ssh_argv,
         build_tunnel_argv, format_argv_for_display, launch_install_public_key_in_terminal,
         launch_rdp as launch_rdp_client, launch_sftp_in_terminal, launch_ssh_in_terminal,
-        launch_tunnel_in_terminal, test_terminal as launch_terminal_test,
-        terminal_availability, validate_public_key_file_path,
+        launch_tunnel_in_terminal, terminal_availability, test_terminal as launch_terminal_test,
+        validate_public_key_file_path,
     },
 };
 

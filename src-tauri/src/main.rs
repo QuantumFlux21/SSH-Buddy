@@ -34,7 +34,9 @@ fn main() {
             let database_result = app
                 .path()
                 .app_data_dir()
-                .map_err(|error| format!("Could not resolve the application data directory: {error}"))
+                .map_err(|error| {
+                    format!("Could not resolve the application data directory: {error}")
+                })
                 .and_then(|app_data_dir| initialize_database(&app_data_dir));
             let database = match database_result {
                 Ok(database) => database,
@@ -92,16 +94,14 @@ fn main() {
 
 fn initialize_database(app_data_dir: &Path) -> Result<Database, String> {
     fs::create_dir_all(app_data_dir).map_err(|error| {
-        format!(
-            "Could not create or access the application data directory: {error}"
-        )
+        format!("Could not create or access the application data directory: {error}")
     })?;
     let db_path = app_data_dir.join("ssh-buddy.sqlite3");
     let database = Database::open(&db_path)
         .map_err(|error| format!("Could not open the local SQLite database: {error}"))?;
-    database
-        .migrate()
-        .map_err(|error| format!("Could not verify or migrate the local SQLite database: {error}"))?;
+    database.migrate().map_err(|error| {
+        format!("Could not verify or migrate the local SQLite database: {error}")
+    })?;
     Ok(database)
 }
 

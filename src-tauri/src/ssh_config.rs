@@ -710,7 +710,10 @@ mod tests {
         assert_eq!(preview.len(), 3);
         assert!(preview[0].skipped);
         assert!(!preview[0].selected);
-        assert!(preview[0].warnings.iter().any(|warning| warning.contains("Host must not start")));
+        assert!(preview[0]
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("Host must not start")));
         assert!(preview[1].skipped);
         assert!(!preview[1].selected);
         assert!(preview[1]
@@ -749,8 +752,7 @@ mod tests {
             ",
         );
 
-        let preview =
-            import_preview_from_path(&db, &path, &resolver_must_not_run).unwrap();
+        let preview = import_preview_from_path(&db, &path, &resolver_must_not_run).unwrap();
 
         assert_eq!(preview.len(), 1);
         assert!(preview[0].skipped);

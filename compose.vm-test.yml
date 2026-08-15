@@ -1,0 +1,24 @@
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.vm-test
+      target: frontend
+    working_dir: /workspace
+    network_mode: none
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+  rust:
+    build:
+      context: .
+      dockerfile: Dockerfile.vm-test
+      target: rust
+    working_dir: /workspace
+    network_mode: none
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
