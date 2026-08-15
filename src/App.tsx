@@ -46,6 +46,7 @@ import {
   validateServerForm,
   type ServerFormModel,
 } from "./lib/serverForm";
+import { TERMINAL_OPTIONS, terminalPreferenceForTest } from "./lib/terminalSettings";
 import {
   hasTunnelFormErrors,
   newTunnelDraft,
@@ -76,6 +77,7 @@ import type {
   ServerStatusState,
   SshKeyInput,
   SshKeyRef,
+  TerminalAvailability,
   Tunnel,
   WebLink,
 } from "./lib/types";
@@ -234,7 +236,7 @@ export default function App() {
 
   function launchStatus(details: LaunchDiagnostics) {
     setLastLaunchAttempt(details);
-    if (details.backendResult !== "spawned") {
+    if (details.backendResult !== "started") {
       throw new Error(details.message);
     }
     return details.message;
@@ -299,9 +301,9 @@ export default function App() {
     }
   }
 
-  async function testTerminal() {
+  async function testTerminal(terminalPreference: string) {
     await runAction("Testing terminal", async () => {
-      return launchStatus(await api.testTerminal());
+      return launchStatus(await api.testTerminal(terminalPreference));
     });
   }
 
@@ -578,8 +580,14 @@ export default function App() {
         <div className="boot-mark">
           <Terminal size={34} />
         </div>
-        <p>Loading SSH-Buddy...</p>
-        {error ? <p className="error-text">{error}</p> : null}
+        <h1>{error ? "Local data is unavailable" : "Loading SSH-Buddy…"}</h1>
+        {error ? (
+          <div className="error-text startup-error" role="alert">
+            <strong>SSH-Buddy did not continue with database access.</strong>
+            <span>{error}</span>
+            <span>Your existing database was not deleted. Follow the backup/restore guide before replacing any file.</span>
+          </div>
+        ) : null}
       </div>
     );
   }
@@ -947,10 +955,12 @@ function LaunchDetailsPanel({ details }: { details: LaunchDiagnostics }) {
         </div>
       ) : null}
 
-      <details className="diagnostics-details" open={details.backendResult !== "spawned"}>
+      <details className="diagnostics-details" open={details.backendResult !== "started"}>
         <summary>Show launch details</summary>
 
         <div className="launch-detail-grid">
+          <LaunchDetail label="Immediate exit code" value={details.exitCode === null ? "None" : String(details.exitCode)} />
+          <LaunchDetail label="Host environment restored" value={details.environmentSanitized ? "Yes (AppImage)" : "Not needed"} />
           <LaunchDetail label="Key path" value={details.keyPath ?? "No explicit key"} />
           <LaunchDetail label="Key file exists" value={formatMaybeBoolean(details.keyFileExists)} />
           <LaunchDetail label="Public key path" value={details.publicKeyPath ?? "No public key path"} />
@@ -990,6 +1000,13 @@ function LaunchDetailsPanel({ details }: { details: LaunchDiagnostics }) {
           <div className="command-preview">
             <span>Spawned argv preview</span>
             <code>{details.argvPreview}</code>
+          </div>
+        ) : null}
+
+        {details.stderr ? (
+          <div className="command-preview">
+            <span>Bounded launch error</span>
+            <code>{details.stderr}</code>
           </div>
         ) : null}
 
@@ -1044,12 +1061,16 @@ function launchActionLabel(actionType: string) {
 
 function launchResultLabel(result: string) {
   switch (result) {
-    case "spawned":
-      return "Process spawned";
+    case "started":
+      return "Started";
+    case "notFound":
+      return "Not found";
     case "preflightFailed":
       return "Preflight failed";
     case "spawnFailed":
       return "Spawn failed";
+    case "exitedImmediately":
+      return "Exited immediately";
     default:
       return result;
   }
@@ -2590,7 +2611,18 @@ function ServerForm({
           </label>
           <label>
             Username
-            <input value={form.username} onChange={(event) => update("username", event.target.value)} placeholder="OpenSSH default" />
+            <input
+              value={form.username}
+              onChange={(event) => update("username", event.target.value)}
+              placeholder="OpenSSH default"
+              aria-invalid={submitted && Boolean(errors.username)}
+              aria-describedby={submitted && errors.username ? "username-error" : undefined}
+            />
+            {submitted && errors.username ? (
+              <span className="field-error" id="username-error">
+                {errors.username}
+              </span>
+            ) : null}
           </label>
           <label className="span-2">
             ProxyJump
@@ -2832,14 +2864,37 @@ function SettingsPanel({
 }: {
   settings: AppSettings;
   busy: boolean;
-  onTestTerminal: () => void;
+  onTestTerminal: (terminalPreference: string) => void;
   onSave: (settings: AppSettings) => void;
 }) {
   const [draft, setDraft] = useState(settings);
+  const [terminalAvailability, setTerminalAvailability] = useState<TerminalAvailability[]>([]);
+  const [availabilityError, setAvailabilityError] = useState<string | null>(null);
 
   useEffect(() => {
     setDraft(settings);
   }, [settings]);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .getTerminalAvailability()
+      .then((availability) => {
+        if (!cancelled) {
+          setTerminalAvailability(availability);
+          setAvailabilityError(null);
+        }
+      })
+      .catch((cause: unknown) => {
+        if (!cancelled) {
+          setAvailabilityError(cause instanceof Error ? cause.message : String(cause));
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   return (
     <section className="settings-grid">
@@ -2853,16 +2908,31 @@ function SettingsPanel({
         <h2>Connection behavior</h2>
         <label>
           Terminal preference
-          <select value={draft.terminalPreference} onChange={(event) => setDraft({ ...draft, terminalPreference: event.target.value })}>
-            <option value="auto">Auto detect</option>
-            <option value="konsole">Konsole</option>
-            <option value="kitty">Kitty</option>
-            <option value="alacritty">Alacritty</option>
-            <option value="wezterm">WezTerm</option>
-            <option value="gnome-terminal">GNOME Terminal</option>
-            <option value="xterm">xterm</option>
+          <select
+            value={draft.terminalPreference}
+            onChange={(event) => setDraft({ ...draft, terminalPreference: event.target.value })}
+            aria-describedby="terminal-test-behavior"
+          >
+            {TERMINAL_OPTIONS.map((terminal) => (
+              <option key={terminal.value} value={terminal.value}>
+                {terminal.label}
+              </option>
+            ))}
           </select>
+          <span className="field-hint" id="terminal-test-behavior">
+            Test terminal always uses the selection currently shown, even before you save it.
+          </span>
         </label>
+        <div className="terminal-availability" aria-label="Terminal availability">
+          <strong>Detected host terminals</strong>
+          {terminalAvailability.map((terminal) => (
+            <span key={terminal.preference} className={terminal.available ? "binary-status ok" : "binary-status missing"}>
+              {terminal.label}: {terminal.executable ?? "not found"}
+            </span>
+          ))}
+          {terminalAvailability.length === 0 && !availabilityError ? <span className="field-hint">Checking host PATH…</span> : null}
+          {availabilityError ? <span className="field-error">Availability check failed: {availabilityError}</span> : null}
+        </div>
         <label className="check-row">
           <input
             type="checkbox"
@@ -2875,9 +2945,14 @@ function SettingsPanel({
           <button className="button primary" type="submit" disabled={busy}>
             Save settings
           </button>
-          <button className="button" type="button" disabled={busy} onClick={onTestTerminal}>
+          <button
+            className="button"
+            type="button"
+            disabled={busy}
+            onClick={() => onTestTerminal(terminalPreferenceForTest(draft))}
+          >
             <Terminal size={16} />
-            Test terminal
+            Test visible selection
           </button>
         </div>
       </form>

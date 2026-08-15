@@ -73,6 +73,10 @@ describe("filterServers", () => {
 });
 
 describe("groupName", () => {
+  it("returns known group names", () => {
+    expect(groupName(groups, "grp_lab")).toBe("Homelab");
+  });
+
   it("formats missing groups", () => {
     expect(groupName(groups, null)).toBe("Ungrouped");
     expect(groupName(groups, "missing")).toBe("Unknown group");

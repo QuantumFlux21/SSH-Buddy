@@ -46,5 +46,6 @@ describe("import summary helpers", () => {
       "Imported 1 server. Skipped 1 server that could not be imported.",
     );
     expect(formatImportResult({ imported: 0, skipped: 2, servers: [] })).toBe("No servers imported. Skipped 2 servers.");
+    expect(formatImportResult({ imported: 0, skipped: 0, servers: [] })).toBe("No servers were imported.");
   });
 });

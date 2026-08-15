@@ -15,7 +15,7 @@ export interface ServerFormModel {
   tagText: string;
 }
 
-export type ServerFormErrors = Partial<Record<"displayName" | "host" | "port" | "proxyJump", string>>;
+export type ServerFormErrors = Partial<Record<"displayName" | "host" | "port" | "username" | "proxyJump", string>>;
 
 export const newServerDraft = (server?: ServerProfile | null): ServerFormModel => ({
   id: server?.id ?? null,
@@ -69,8 +69,14 @@ export function validateServerForm(form: ServerFormModel): ServerFormErrors {
     errors.displayName = "Display name is required.";
   }
 
-  if (!form.host.trim()) {
-    errors.host = "Hostname or IP is required.";
+  const hostError = validateSshHost(form.host);
+  if (hostError) {
+    errors.host = hostError;
+  }
+
+  const usernameError = validateSshUsername(form.username);
+  if (usernameError) {
+    errors.username = usernameError;
   }
 
   if (!form.port.trim() || !Number.isInteger(port) || port < 1 || port > 65535) {
@@ -88,6 +94,50 @@ export function validateServerForm(form: ServerFormModel): ServerFormErrors {
   }
 
   return errors;
+}
+
+function validateSshHost(value: string) {
+  if (!value.trim()) {
+    return "Hostname or IP is required.";
+  }
+
+  if (value.startsWith("-")) {
+    return "Hostname or IP must not start with '-'.";
+  }
+
+  if (containsWhitespaceOrControl(value)) {
+    return "Hostname or IP must not contain whitespace or control characters.";
+  }
+
+  if (value.includes("@")) {
+    return "Hostname or IP must not contain '@'; set the username separately.";
+  }
+
+  return null;
+}
+
+function validateSshUsername(value: string) {
+  if (!value) {
+    return null;
+  }
+
+  if (value.startsWith("-")) {
+    return "Username must not start with '-'.";
+  }
+
+  if (containsWhitespaceOrControl(value)) {
+    return "Username must not contain whitespace or control characters.";
+  }
+
+  if (value.includes("@")) {
+    return "Username must not contain '@'.";
+  }
+
+  return null;
+}
+
+function containsWhitespaceOrControl(value: string) {
+  return /[\s\p{Cc}]/u.test(value);
 }
 
 export function hasServerFormErrors(errors: ServerFormErrors) {

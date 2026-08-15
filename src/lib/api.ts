@@ -16,6 +16,7 @@ import type {
   SshKeyInput,
   SshKeyRef,
   Tag,
+  TerminalAvailability,
   Tunnel,
   TunnelInput,
   WebLink,
@@ -85,6 +86,9 @@ function mockLaunchDiagnostics(actionType: string, commandPreview = ""): LaunchD
     requiredBinaries: [],
     backendResult: "preflightFailed",
     message: `${actionType.toUpperCase()} launch requires the Tauri desktop app`,
+    exitCode: null,
+    stderr: null,
+    environmentSanitized: false,
     freeRdpExecutable: null,
     launchedViaTerminal: null,
     certificateMode: null,
@@ -274,6 +278,15 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
     case "save_settings":
       mockState.settings = args?.input as AppSettings;
       return structuredClone(mockState.settings) as T;
+    case "get_terminal_availability":
+      return [
+        { preference: "konsole", label: "Konsole", available: false, executable: null },
+        { preference: "kitty", label: "kitty", available: false, executable: null },
+        { preference: "alacritty", label: "Alacritty", available: false, executable: null },
+        { preference: "wezterm", label: "WezTerm", available: false, executable: null },
+        { preference: "gnome-terminal", label: "GNOME Terminal", available: false, executable: null },
+        { preference: "xterm", label: "xterm", available: false, executable: null },
+      ] as T;
     case "test_terminal":
       return {
         ...mockLaunchDiagnostics("terminal-test", "printf 'SSH-Buddy terminal test\\n'"),
@@ -714,7 +727,9 @@ export const api = {
   saveSshKey: (input: SshKeyInput) => call<SshKeyRef>("create_ssh_key_ref", { input }),
   deleteSshKey: (id: string) => call<void>("delete_ssh_key_ref", { id }),
   saveSettings: (input: AppSettings) => call<AppSettings>("save_settings", { input }),
-  testTerminal: () => call<LaunchDiagnostics>("test_terminal"),
+  getTerminalAvailability: () => call<TerminalAvailability[]>("get_terminal_availability"),
+  testTerminal: (terminalPreference: string) =>
+    call<LaunchDiagnostics>("test_terminal", { terminalPreference }),
   getSshCommand: (serverId: string) => call<string>("get_ssh_command", { serverId }),
   launchSsh: (serverId: string) => call<LaunchDiagnostics>("launch_ssh", { serverId }),
   getSftpCommand: (serverId: string) => call<string>("get_sftp_command", { serverId }),

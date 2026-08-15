@@ -171,6 +171,14 @@ export interface ImportResult {
 export interface LaunchBinaryStatus {
   name: string;
   exists: boolean;
+  executable: string | null;
+}
+
+export interface TerminalAvailability {
+  preference: string;
+  label: string;
+  available: boolean;
+  executable: string | null;
 }
 
 export interface LaunchDiagnostics {
@@ -184,8 +192,11 @@ export interface LaunchDiagnostics {
   publicKeyPath: string | null;
   publicKeyFileExists: boolean | null;
   requiredBinaries: LaunchBinaryStatus[];
-  backendResult: "spawned" | "preflightFailed" | "spawnFailed" | string;
+  backendResult: "started" | "notFound" | "preflightFailed" | "spawnFailed" | "exitedImmediately" | string;
   message: string;
+  exitCode: number | null;
+  stderr: string | null;
+  environmentSanitized: boolean;
   freeRdpExecutable: string | null;
   launchedViaTerminal: boolean | null;
   certificateMode: RdpCertificateMode | string | null;

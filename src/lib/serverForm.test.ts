@@ -27,6 +27,37 @@ describe("server form helpers", () => {
     expect(validateServerForm({ ...newServerDraft(), displayName: "NAS", host: "nas.local", port: "22" })).toEqual({});
   });
 
+  it("allows OpenSSH aliases and IPv6 destination hosts", () => {
+    for (const host of ["prod_web+blue", "192.0.2.10", "2001:db8::10", "[2001:db8::10]", "fe80::1%eth0"]) {
+      expect(validateServerForm({ ...newServerDraft(), displayName: "NAS", host, username: "admin" })).toEqual({});
+    }
+  });
+
+  it("rejects unsafe SSH destination hosts", () => {
+    for (const [host, message] of [
+      ["-oProxyCommand=touch", "Hostname or IP must not start with '-'."],
+      ["nas local", "Hostname or IP must not contain whitespace or control characters."],
+      ["nas\nlocal", "Hostname or IP must not contain whitespace or control characters."],
+      [`nas${String.fromCharCode(7)}local`, "Hostname or IP must not contain whitespace or control characters."],
+      ["admin@nas.local", "Hostname or IP must not contain '@'; set the username separately."],
+    ]) {
+      expect(validateServerForm({ ...newServerDraft(), displayName: "NAS", host }).host).toBe(message);
+    }
+  });
+
+  it("rejects unsafe SSH destination usernames", () => {
+    for (const [username, message] of [
+      ["-Fmalicious-config", "Username must not start with '-'."],
+      ["admin user", "Username must not contain whitespace or control characters."],
+      [`admin${String.fromCharCode(7)}`, "Username must not contain whitespace or control characters."],
+      ["admin@ops", "Username must not contain '@'."],
+    ]) {
+      expect(validateServerForm({ ...newServerDraft(), displayName: "NAS", host: "nas.local", username }).username).toBe(
+        message,
+      );
+    }
+  });
+
   it("validates proxy jump values", () => {
     expect(
       validateServerForm({
