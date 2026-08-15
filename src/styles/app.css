@@ -1056,6 +1056,39 @@ code {
   gap: 14px;
 }
 
+.desktop-behavior-settings {
+  align-self: start;
+}
+
+.desktop-setting-detail {
+  display: grid;
+  justify-items: start;
+  gap: 7px;
+  margin-top: -7px;
+  padding-left: 27px;
+}
+
+.desktop-warning {
+  border: 1px solid rgba(242, 193, 78, 0.3);
+  border-radius: 8px;
+  color: #eadcae;
+  background: rgba(242, 193, 78, 0.08);
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.desktop-status {
+  margin: 0;
+  padding: 10px 12px;
+  font-size: 12px;
+}
+
+.compact-button {
+  padding: 7px 9px;
+  font-size: 12px;
+}
+
 label {
   display: grid;
   gap: 7px;

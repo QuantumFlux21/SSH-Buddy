@@ -3,7 +3,12 @@ import { terminalPreferenceForTest } from "./terminalSettings";
 
 describe("terminal settings", () => {
   it("tests the selected draft without changing the persisted preference", () => {
-    const persisted = { terminalPreference: "konsole", safetyWarningsEnabled: true };
+    const persisted = {
+      terminalPreference: "konsole",
+      safetyWarningsEnabled: true,
+      startMinimized: false,
+      closeToTray: false,
+    };
     const draft = { ...persisted, terminalPreference: "alacritty" };
 
     expect(terminalPreferenceForTest(draft)).toBe("alacritty");

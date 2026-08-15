@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   AppSettings,
   AppStateSnapshot,
+  DesktopBehaviorStatus,
   Group,
   GroupInput,
   ImportCandidate,
@@ -65,6 +66,8 @@ const mockState: AppStateSnapshot = {
   settings: {
     terminalPreference: "auto",
     safetyWarningsEnabled: true,
+    startMinimized: false,
+    closeToTray: false,
   },
   servers: [],
 };
@@ -278,6 +281,20 @@ async function mockCall<T>(command: string, args?: Record<string, unknown>): Pro
     case "save_settings":
       mockState.settings = args?.input as AppSettings;
       return structuredClone(mockState.settings) as T;
+    case "get_desktop_behavior_status":
+      return {
+        autostartEnabled: false,
+        autostartError: null,
+        trayAvailable: false,
+        trayError: "System tray integration requires the Tauri desktop app.",
+      } as T;
+    case "set_autostart_enabled":
+      return {
+        autostartEnabled: false,
+        autostartError: "Login startup changes require the Tauri desktop app.",
+        trayAvailable: false,
+        trayError: "System tray integration requires the Tauri desktop app.",
+      } as T;
     case "get_terminal_availability":
       return [
         { preference: "konsole", label: "Konsole", available: false, executable: null },
@@ -727,6 +744,9 @@ export const api = {
   saveSshKey: (input: SshKeyInput) => call<SshKeyRef>("create_ssh_key_ref", { input }),
   deleteSshKey: (id: string) => call<void>("delete_ssh_key_ref", { id }),
   saveSettings: (input: AppSettings) => call<AppSettings>("save_settings", { input }),
+  getDesktopBehaviorStatus: () => call<DesktopBehaviorStatus>("get_desktop_behavior_status"),
+  setAutostartEnabled: (enabled: boolean) =>
+    call<DesktopBehaviorStatus>("set_autostart_enabled", { enabled }),
   getTerminalAvailability: () => call<TerminalAvailability[]>("get_terminal_availability"),
   testTerminal: (terminalPreference: string) =>
     call<LaunchDiagnostics>("test_terminal", { terminalPreference }),

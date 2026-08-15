@@ -83,6 +83,15 @@ export interface ServerProfile {
 export interface AppSettings {
   terminalPreference: string;
   safetyWarningsEnabled: boolean;
+  startMinimized: boolean;
+  closeToTray: boolean;
+}
+
+export interface DesktopBehaviorStatus {
+  autostartEnabled: boolean | null;
+  autostartError: string | null;
+  trayAvailable: boolean;
+  trayError: string | null;
 }
 
 export interface AppStateSnapshot {

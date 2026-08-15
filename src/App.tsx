@@ -23,6 +23,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import { DesktopBehaviorSettings } from "./components/DesktopBehaviorSettings";
 import { api } from "./lib/api";
 import { CLIPBOARD_MANUAL_COPY_MESSAGE, copyTextToClipboard } from "./lib/clipboard";
 import { filterServers, groupName } from "./lib/filters";
@@ -824,14 +825,19 @@ export default function App() {
             busy={isBusy}
             onTestTerminal={testTerminal}
             onSave={async (settings) => {
-              await runAction(
-                "Saving settings",
-                async () => {
-                  await api.saveSettings(settings);
-                  await loadState();
-                },
-                "Settings saved.",
-              );
+              setBusyMessage("Saving settings");
+              setError(null);
+              setStatusMessage(null);
+              try {
+                const savedSettings = await api.saveSettings(settings);
+                setSnapshot((current) => (current ? { ...current, settings: savedSettings } : current));
+                setStatusMessage("Settings saved.");
+              } catch (cause: unknown) {
+                setError(cause instanceof Error ? cause.message : String(cause));
+                throw cause;
+              } finally {
+                setBusyMessage(null);
+              }
             }}
           />
         ) : null}
@@ -2865,7 +2871,7 @@ function SettingsPanel({
   settings: AppSettings;
   busy: boolean;
   onTestTerminal: (terminalPreference: string) => void;
-  onSave: (settings: AppSettings) => void;
+  onSave: (settings: AppSettings) => Promise<void>;
 }) {
   const [draft, setDraft] = useState(settings);
   const [terminalAvailability, setTerminalAvailability] = useState<TerminalAvailability[]>([]);
@@ -2873,7 +2879,7 @@ function SettingsPanel({
 
   useEffect(() => {
     setDraft(settings);
-  }, [settings]);
+  }, [settings.terminalPreference, settings.safetyWarningsEnabled]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2898,11 +2904,16 @@ function SettingsPanel({
 
   return (
     <section className="settings-grid">
+      <DesktopBehaviorSettings settings={settings} busy={busy} onSaveSettings={onSave} />
       <form
         className="panel edit-panel"
         onSubmit={(event) => {
           event.preventDefault();
-          onSave(draft);
+          void onSave({
+            ...settings,
+            terminalPreference: draft.terminalPreference,
+            safetyWarningsEnabled: draft.safetyWarningsEnabled,
+          });
         }}
       >
         <h2>Connection behavior</h2>
