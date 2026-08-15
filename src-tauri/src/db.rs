@@ -1,5 +1,7 @@
 use std::{
-    path::Path,
+    ffi::OsStr,
+    fs,
+    path::{Path, PathBuf},
     sync::{Mutex, MutexGuard},
     time::Duration,
 };
@@ -56,14 +58,24 @@ const MIGRATIONS: &[(&str, &str)] = &[
 #[derive(Debug)]
 pub struct Database {
     conn: Mutex<Connection>,
+    path: Option<PathBuf>,
+    existed_with_data_at_open: bool,
+    unavailable_error: Option<String>,
 }
 
 impl Database {
     pub fn open(path: impl AsRef<Path>) -> AppResult<Self> {
-        let conn = Connection::open(path).map_err(to_error)?;
+        let path = path.as_ref().to_path_buf();
+        let existed_with_data_at_open = fs::metadata(&path)
+            .map(|metadata| metadata.len() > 0)
+            .unwrap_or(false);
+        let conn = Connection::open(&path).map_err(to_error)?;
         prepare_connection(&conn)?;
         Ok(Self {
             conn: Mutex::new(conn),
+            path: Some(path),
+            existed_with_data_at_open,
+            unavailable_error: None,
         })
     }
 
@@ -73,11 +85,34 @@ impl Database {
         prepare_connection(&conn)?;
         Ok(Self {
             conn: Mutex::new(conn),
+            path: None,
+            existed_with_data_at_open: false,
+            unavailable_error: None,
+        })
+    }
+
+    pub fn unavailable(message: String) -> AppResult<Self> {
+        let conn = Connection::open_in_memory().map_err(to_error)?;
+        Ok(Self {
+            conn: Mutex::new(conn),
+            path: None,
+            existed_with_data_at_open: false,
+            unavailable_error: Some(message),
         })
     }
 
     pub fn migrate(&self) -> AppResult<()> {
         let mut conn = self.lock()?;
+        verify_database_integrity(&conn, "before migration")?;
+
+        if self.existed_with_data_at_open && migrations_pending(&conn)? {
+            let path = self
+                .path
+                .as_deref()
+                .ok_or_else(|| "Database backup path is unavailable".to_string())?;
+            create_pre_migration_backup(&conn, path)?;
+        }
+
         conn.execute_batch(
             "
             PRAGMA foreign_keys = ON;
@@ -104,6 +139,8 @@ impl Database {
             .map_err(to_error)?;
             tx.commit().map_err(to_error)?;
         }
+
+        verify_database_integrity(&conn, "after migration")?;
 
         Ok(())
     }
@@ -870,10 +907,76 @@ impl Database {
     }
 
     fn lock(&self) -> AppResult<MutexGuard<'_, Connection>> {
+        if let Some(error) = &self.unavailable_error {
+            return Err(error.clone());
+        }
+
         self.conn
             .lock()
             .map_err(|_| "Database lock was poisoned".to_string())
     }
+}
+
+fn verify_database_integrity(conn: &Connection, phase: &str) -> AppResult<()> {
+    let result = conn
+        .query_row("PRAGMA quick_check(1)", [], |row| row.get::<_, String>(0))
+        .map_err(to_error)?;
+    if result == "ok" {
+        Ok(())
+    } else {
+        Err(format!(
+            "Database integrity check failed {phase}: {result}. Stop using the database and restore a known-good backup before retrying."
+        ))
+    }
+}
+
+fn migrations_pending(conn: &Connection) -> AppResult<bool> {
+    if !database_table_exists(conn, "schema_migrations")? {
+        return Ok(true);
+    }
+
+    for (version, _) in MIGRATIONS {
+        if !migration_applied(conn, version)? {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
+fn database_table_exists(conn: &Connection, table_name: &str) -> AppResult<bool> {
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
+        params![table_name],
+        |row| row.get::<_, i64>(0),
+    )
+    .map(|value| value == 1)
+    .map_err(to_error)
+}
+
+fn create_pre_migration_backup(conn: &Connection, database_path: &Path) -> AppResult<PathBuf> {
+    let parent = database_path.parent().unwrap_or_else(|| Path::new("."));
+    let database_name = database_path
+        .file_name()
+        .and_then(OsStr::to_str)
+        .unwrap_or("ssh-buddy.sqlite3");
+    let timestamp = chrono::Utc::now().format("%Y%m%dT%H%M%S%.3fZ");
+    let backup_path = parent.join(format!(
+        "{database_name}.pre-migration-{timestamp}-{}.bak",
+        uuid::Uuid::new_v4()
+    ));
+    let backup_path_text = backup_path
+        .to_str()
+        .ok_or_else(|| "Database backup path is not valid UTF-8".to_string())?;
+
+    conn.execute("VACUUM INTO ?1", params![backup_path_text])
+        .map_err(|error| {
+            format!(
+                "Could not create the required pre-migration database backup: {error}. The original database was not modified."
+            )
+        })?;
+
+    Ok(backup_path)
 }
 
 fn prepare_connection(conn: &Connection) -> AppResult<()> {
@@ -1223,6 +1326,7 @@ mod tests {
         AppSettings, GroupInput, RdpSettingsInput, ServerInput, SshKeyInput, TunnelInput,
         WebLinkInput,
     };
+    use tempfile::tempdir;
 
     fn test_db() -> Database {
         let db = Database::open_in_memory().unwrap();
@@ -1280,6 +1384,104 @@ mod tests {
     }
 
     #[test]
+    fn v0_6_0_fixture_upgrades_without_losing_saved_data() {
+        let dir = tempdir().unwrap();
+        let database_path = dir.path().join("ssh-buddy.sqlite3");
+        let fixture = Connection::open(&database_path).unwrap();
+        fixture
+            .execute_batch(include_str!("../test-fixtures/v0.6.0.sql"))
+            .unwrap();
+        drop(fixture);
+
+        let db = Database::open(&database_path).unwrap();
+        db.migrate().unwrap();
+
+        let servers = db.list_servers().unwrap();
+        assert_eq!(servers.len(), 1);
+        assert_eq!(servers[0].id, "srv_fixture");
+        assert_eq!(servers[0].host, "nas.fixture.invalid");
+        assert_eq!(servers[0].proxy_jump.as_deref(), Some("jump.fixture.invalid"));
+        assert_eq!(servers[0].group_id.as_deref(), Some("grp_fixture"));
+        assert_eq!(servers[0].identity_file_id.as_deref(), Some("key_fixture"));
+        assert_eq!(servers[0].tags[0].name, "fixture");
+        let groups = db.list_groups().unwrap();
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].id, "grp_fixture");
+        let keys = db.list_ssh_key_refs().unwrap();
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].id, "key_fixture");
+        assert_eq!(keys[0].path, "~/.ssh/id_fixture");
+        let settings = db.get_settings().unwrap();
+        assert_eq!(settings.terminal_preference, "konsole");
+        assert!(settings.safety_warnings_enabled);
+        let links = db.list_web_links("srv_fixture").unwrap();
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].id, "web_fixture");
+        let tunnels = db.list_tunnels("srv_fixture").unwrap();
+        assert_eq!(tunnels.len(), 1);
+        assert_eq!(tunnels[0].id, "tun_fixture");
+        let rdp = db.get_rdp_settings("srv_fixture").unwrap().unwrap();
+        assert_eq!(rdp.scaling_percent, Some(140));
+        assert_eq!(rdp.monitor_ids.as_deref(), Some("0,1"));
+    }
+
+    #[test]
+    fn pending_file_migration_creates_recoverable_snapshot_first() {
+        let dir = tempdir().unwrap();
+        let database_path = dir.path().join("ssh-buddy.sqlite3");
+        let mut fixture = Connection::open(&database_path).unwrap();
+        fixture
+            .execute_batch(
+                "CREATE TABLE schema_migrations (version TEXT PRIMARY KEY, applied_at TEXT NOT NULL);",
+            )
+            .unwrap();
+        for &(version, sql) in &MIGRATIONS[..8] {
+            let tx = fixture.transaction().unwrap();
+            tx.execute_batch(sql).unwrap();
+            tx.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, ?2)",
+                params![version, "2026-07-01T00:00:00.000Z"],
+            )
+            .unwrap();
+            tx.commit().unwrap();
+        }
+        drop(fixture);
+
+        let db = Database::open(&database_path).unwrap();
+        db.migrate().unwrap();
+        assert!(db
+            .column_exists("server_rdp_settings", "scaling_mode")
+            .unwrap());
+
+        let backup_path = fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .find(|path| {
+                path.file_name()
+                    .and_then(OsStr::to_str)
+                    .is_some_and(|name| name.contains(".pre-migration-") && name.ends_with(".bak"))
+            })
+            .expect("a pre-migration backup should be created");
+        let backup = Connection::open(backup_path).unwrap();
+        verify_database_integrity(&backup, "in pre-migration backup").unwrap();
+        let applied_migrations = backup
+            .query_row("SELECT COUNT(*) FROM schema_migrations", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap();
+        assert_eq!(applied_migrations, 8);
+        let scaling_column_count = backup
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('server_rdp_settings') WHERE name = 'scaling_mode'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap();
+        assert_eq!(scaling_column_count, 0);
+    }
+
+    #[test]
     fn settings_round_trip_and_reject_invalid_terminal() {
         let db = test_db();
         assert_eq!(db.get_settings().unwrap().terminal_preference, "auto");
@@ -1328,6 +1530,30 @@ mod tests {
         assert_eq!(db.list_servers().unwrap().len(), 1);
         db.delete_server(&created.id).unwrap();
         assert!(db.list_servers().unwrap().is_empty());
+    }
+
+    #[test]
+    fn server_create_and_update_reject_unsafe_ssh_destinations() {
+        let db = test_db();
+        let mut unsafe_create = server_input();
+        unsafe_create.host = "-oProxyCommand=touch".to_string();
+        assert_eq!(
+            db.create_server(unsafe_create).unwrap_err(),
+            "Host must not start with '-'"
+        );
+        assert!(db.list_servers().unwrap().is_empty());
+
+        let created = db.create_server(server_input()).unwrap();
+        let mut unsafe_update = server_input();
+        unsafe_update.username = "-Fmalicious-config".to_string();
+        assert_eq!(
+            db.update_server(&created.id, unsafe_update).unwrap_err(),
+            "Username must not start with '-'"
+        );
+        assert_eq!(
+            db.get_server(&created.id).unwrap().unwrap().username,
+            "admin"
+        );
     }
 
     #[test]

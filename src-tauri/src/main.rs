@@ -7,7 +7,7 @@ mod launcher;
 mod ssh_config;
 mod status;
 
-use std::{fs, io};
+use std::{fs, io, path::Path};
 
 use commands::{
     check_server_status, create_group, create_server, create_ssh_key_ref, create_tunnel,
@@ -31,11 +31,16 @@ fn main() {
                 .build(),
         )
         .setup(|app| {
-            let app_data_dir = app.path().app_data_dir()?;
-            fs::create_dir_all(&app_data_dir)?;
-            let db_path = app_data_dir.join("ssh-buddy.sqlite3");
-            let database = Database::open(&db_path).map_err(io::Error::other)?;
-            database.migrate().map_err(io::Error::other)?;
+            let database_result = app
+                .path()
+                .app_data_dir()
+                .map_err(|error| format!("Could not resolve the application data directory: {error}"))
+                .and_then(|app_data_dir| initialize_database(&app_data_dir));
+            let database = match database_result {
+                Ok(database) => database,
+                Err(error) => Database::unavailable(database_recovery_message(&error))
+                    .map_err(io::Error::other)?,
+            };
             app.manage(database);
             Ok(())
         })
@@ -83,4 +88,25 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+fn initialize_database(app_data_dir: &Path) -> Result<Database, String> {
+    fs::create_dir_all(app_data_dir).map_err(|error| {
+        format!(
+            "Could not create or access the application data directory: {error}"
+        )
+    })?;
+    let db_path = app_data_dir.join("ssh-buddy.sqlite3");
+    let database = Database::open(&db_path)
+        .map_err(|error| format!("Could not open the local SQLite database: {error}"))?;
+    database
+        .migrate()
+        .map_err(|error| format!("Could not verify or migrate the local SQLite database: {error}"))?;
+    Ok(database)
+}
+
+fn database_recovery_message(error: &str) -> String {
+    format!(
+        "SSH-Buddy could not safely open its local data: {error} Database access is disabled for this session to prevent further changes. Close SSH-Buddy, verify app-data permissions and free space, then reopen it. If integrity or migration failed, preserve the database and restore a documented pre-migration backup before retrying."
+    )
 }

@@ -7,7 +7,10 @@ use std::{
 
 use crate::{
     db::Database,
-    domain::{AppResult, ImportCandidate, ImportResult, ServerInput, ServerProfile},
+    domain::{
+        validate_ssh_destination, AppResult, ImportCandidate, ImportResult, ServerInput,
+        ServerProfile,
+    },
 };
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -97,6 +100,11 @@ fn import_selected_from_path(
             continue;
         }
 
+        if validate_ssh_destination(&candidate.host, &candidate.username).is_err() {
+            skipped += 1;
+            continue;
+        }
+
         let identity_file_id = match candidate.identity_file.as_deref() {
             Some(path) => Some(db.find_or_create_ssh_key_ref_for_path(path)?.id),
             None => None,
@@ -142,7 +150,18 @@ fn build_candidates(
         .into_iter()
         .map(|parsed| {
             let mut warnings = parsed.warnings.clone();
-            let resolved = if parsed.skipped {
+            let mut skipped = parsed.skipped;
+
+            if !skipped {
+                if let Err(error) = validate_ssh_destination(&parsed.alias, "") {
+                    warnings.push(format!(
+                        "Skipped SSH config alias because it cannot be passed safely to OpenSSH: {error}."
+                    ));
+                    skipped = true;
+                }
+            }
+
+            let resolved = if skipped {
                 None
             } else {
                 match resolver(&parsed.alias) {
@@ -182,7 +201,14 @@ fn build_candidates(
                 warnings.push("ProxyJump detected; SSH-Buddy will store it and launch SSH with OpenSSH -J.".to_string());
             }
 
-            let duplicate = !parsed.skipped && is_duplicate(&parsed.alias, &host, existing_servers);
+            if !skipped {
+                if let Err(error) = validate_ssh_destination(&host, &username) {
+                    warnings.push(format!("Skipped invalid SSH destination: {error}."));
+                    skipped = true;
+                }
+            }
+
+            let duplicate = !skipped && is_duplicate(&parsed.alias, &host, existing_servers);
             if duplicate {
                 warnings.push("Duplicate detected against an existing saved server.".to_string());
             }
@@ -196,9 +222,9 @@ fn build_candidates(
                 identity_file,
                 proxy_jump,
                 warnings,
-                selected: !parsed.skipped && !duplicate,
+                selected: !skipped && !duplicate,
                 duplicate,
-                skipped: parsed.skipped,
+                skipped,
             }
         })
         .collect()
@@ -465,6 +491,10 @@ mod tests {
         Err("bad ssh config line 12".to_string())
     }
 
+    fn resolver_must_not_run(_: &str) -> AppResult<Option<ResolvedHostConfig>> {
+        panic!("unsafe aliases must not be passed to ssh -G")
+    }
+
     #[test]
     fn parses_simple_host_entries() {
         let parsed = parse_ssh_config(
@@ -657,6 +687,78 @@ mod tests {
         assert_eq!(result.imported, 1);
         assert_eq!(result.servers[0].display_name, "router");
         assert_eq!(db.list_servers().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn skips_invalid_destinations_without_persisting_partial_import_data() {
+        let db = test_db();
+        let (_dir, path) = write_config(
+            "
+            Host unsafe-host
+              HostName -oProxyCommand=touch
+              IdentityFile ~/.ssh/id_unsafe
+            Host unsafe-user
+              HostName safe.local
+              User -Fmalicious-config
+            Host ipv6-lab
+              HostName fe80::1%eth0
+              User admin
+            ",
+        );
+
+        let preview = import_preview_from_path(&db, &path, &no_resolver).unwrap();
+        assert_eq!(preview.len(), 3);
+        assert!(preview[0].skipped);
+        assert!(!preview[0].selected);
+        assert!(preview[0].warnings.iter().any(|warning| warning.contains("Host must not start")));
+        assert!(preview[1].skipped);
+        assert!(!preview[1].selected);
+        assert!(preview[1]
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("Username must not start")));
+        assert!(!preview[2].skipped);
+        assert!(preview[2].selected);
+
+        let result = import_selected_from_path(
+            &db,
+            &path,
+            vec![
+                "unsafe-host".to_string(),
+                "unsafe-user".to_string(),
+                "ipv6-lab".to_string(),
+            ],
+            &no_resolver,
+        )
+        .unwrap();
+
+        assert_eq!(result.imported, 1);
+        assert_eq!(result.skipped, 2);
+        assert_eq!(result.servers[0].host, "fe80::1%eth0");
+        assert_eq!(db.list_servers().unwrap().len(), 1);
+        assert!(db.list_ssh_key_refs().unwrap().is_empty());
+    }
+
+    #[test]
+    fn does_not_resolve_option_like_ssh_config_aliases() {
+        let db = test_db();
+        let (_dir, path) = write_config(
+            "
+            Host -oProxyCommand=touch
+              HostName safe.local
+            ",
+        );
+
+        let preview =
+            import_preview_from_path(&db, &path, &resolver_must_not_run).unwrap();
+
+        assert_eq!(preview.len(), 1);
+        assert!(preview[0].skipped);
+        assert!(!preview[0].selected);
+        assert!(preview[0]
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("cannot be passed safely to OpenSSH")));
     }
 
     #[test]

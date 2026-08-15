@@ -420,9 +420,7 @@ pub fn validate_server_input(input: &ServerInput) -> AppResult<()> {
         return Err("Display name is required".to_string());
     }
 
-    if normalize_text(&input.host).is_none() {
-        return Err("Host is required".to_string());
-    }
+    validate_ssh_destination(&input.host, &input.username)?;
 
     if input.port == 0 || input.port > 65_535 {
         return Err("Port must be between 1 and 65535".to_string());
@@ -433,6 +431,48 @@ pub fn validate_server_input(input: &ServerInput) -> AppResult<()> {
     }
 
     Ok(())
+}
+
+pub fn validate_ssh_destination(host: &str, username: &str) -> AppResult<()> {
+    if host.trim().is_empty() {
+        return Err("Host is required".to_string());
+    }
+
+    if host.starts_with('-') {
+        return Err("Host must not start with '-'".to_string());
+    }
+
+    if contains_whitespace_or_control(host) {
+        return Err("Host must not contain whitespace or control characters".to_string());
+    }
+
+    if host.contains('@') {
+        return Err("Host must not contain '@'; set the username separately".to_string());
+    }
+
+    if username.is_empty() {
+        return Ok(());
+    }
+
+    if username.starts_with('-') {
+        return Err("Username must not start with '-'".to_string());
+    }
+
+    if contains_whitespace_or_control(username) {
+        return Err("Username must not contain whitespace or control characters".to_string());
+    }
+
+    if username.contains('@') {
+        return Err("Username must not contain '@'".to_string());
+    }
+
+    Ok(())
+}
+
+fn contains_whitespace_or_control(value: &str) -> bool {
+    value
+        .chars()
+        .any(|character| character.is_whitespace() || character.is_control())
 }
 
 pub fn validate_proxy_jump(value: &str) -> AppResult<()> {
@@ -869,6 +909,60 @@ mod tests {
             validate_server_input(&input).unwrap_err(),
             "Port must be between 1 and 65535"
         );
+    }
+
+    #[test]
+    fn validates_ssh_destination_fields() {
+        for (host, username) in [
+            ("nas", ""),
+            ("prod_web-01", "deploy"),
+            ("192.0.2.10", "root"),
+            ("2001:db8::10", "admin"),
+            ("[2001:db8::10]", "admin"),
+            ("fe80::1%eth0", "admin"),
+        ] {
+            assert!(validate_ssh_destination(host, username).is_ok(), "{username}@{host}");
+        }
+
+        for (host, username, message) in [
+            ("", "admin", "Host is required"),
+            (" ", "admin", "Host is required"),
+            ("-oProxyCommand=touch", "", "Host must not start with '-'"),
+            (
+                "nas local",
+                "admin",
+                "Host must not contain whitespace or control characters",
+            ),
+            (
+                "nas\nlocal",
+                "admin",
+                "Host must not contain whitespace or control characters",
+            ),
+            (
+                "nas\u{7}local",
+                "admin",
+                "Host must not contain whitespace or control characters",
+            ),
+            (
+                "admin@nas.local",
+                "",
+                "Host must not contain '@'; set the username separately",
+            ),
+            ("nas.local", "-oProxyCommand=touch", "Username must not start with '-'"),
+            (
+                "nas.local",
+                "admin user",
+                "Username must not contain whitespace or control characters",
+            ),
+            (
+                "nas.local",
+                "admin\u{7}",
+                "Username must not contain whitespace or control characters",
+            ),
+            ("nas.local", "admin@ops", "Username must not contain '@'"),
+        ] {
+            assert_eq!(validate_ssh_destination(host, username).unwrap_err(), message);
+        }
     }
 
     #[test]
